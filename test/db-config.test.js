@@ -104,3 +104,17 @@ test('no code path builds a database connection from process.env.DATABASE_URL di
   walk(path.join(ROOT, 'src'));
   assert.deepEqual(offenders, [], 'src must go through src/db/config.js');
 });
+
+test('the startup error names the database variables the process can see, never their values', () => {
+  const env = {
+    NODE_ENV: 'production', DATABASE_URL: '  ', PGHOST: 'secret-host.example', DATABASE_PUBLIC_URL: 'postgres://u:topsecret@h/x',
+    RAILWAY_SERVICE_NAME: 'my-app', JWT_SECRET: 'unrelated-secret',
+  };
+  assert.throws(
+    () => resolveDatabaseUrl(env),
+    (e) => /DATABASE_URL=EMPTY/.test(e.message) && /DATABASE_PUBLIC_URL=set/.test(e.message) && /PGHOST=set/.test(e.message) &&
+      /RAILWAY_SERVICE_NAME=my-app/.test(e.message) &&
+      !/topsecret|secret-host|unrelated-secret/.test(e.message)
+  );
+  assert.throws(() => resolveDatabaseUrl({ NODE_ENV: 'production' }), /database variables: none/);
+});

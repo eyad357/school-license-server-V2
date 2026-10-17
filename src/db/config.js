@@ -28,6 +28,23 @@ function isProduction(env = process.env) {
   );
 }
 
+// Names (never values) of database-related variables this process can see, so a
+// misconfigured service is easy to diagnose from the log alone.
+function describeDbEnv(env = process.env) {
+  const parts = Object.keys(env)
+    .filter((k) => /^(DATABASE|POSTGRES|PG[A-Z_]*$)/.test(k))
+    .sort()
+    .map((k) => `${k}=${String(env[k]).trim() === '' ? 'EMPTY' : 'set'}`);
+  const where = ['RAILWAY_SERVICE_NAME', 'RAILWAY_ENVIRONMENT_NAME']
+    .filter((k) => env[k])
+    .map((k) => `${k}=${env[k]}`);
+
+  return (
+    `Seen by this process - database variables: ${parts.length ? parts.join(', ') : 'none'}` +
+    (where.length ? `; ${where.join(', ')}` : '') + '.'
+  );
+}
+
 function resolveDatabaseUrl(env = process.env) {
   const raw = typeof env.DATABASE_URL === 'string' ? env.DATABASE_URL.trim() : '';
 
@@ -39,7 +56,8 @@ function resolveDatabaseUrl(env = process.env) {
     throw new Error(
       'DATABASE_URL is missing or empty in this service\'s environment. ' +
         'Refusing to start: without it the PostgreSQL driver would silently try localhost:5432. ' +
-        'Set DATABASE_URL on THIS service (on Railway: a variable reference to the Postgres service\'s DATABASE_URL) and redeploy.'
+        'Set DATABASE_URL on THIS service (on Railway: a variable reference to the Postgres service\'s DATABASE_URL), apply the staged changes and redeploy. ' +
+        describeDbEnv(env)
     );
   }
 
@@ -65,4 +83,4 @@ function resolveDatabaseUrl(env = process.env) {
   return raw;
 }
 
-module.exports = { resolveDatabaseUrl, isProduction };
+module.exports = { resolveDatabaseUrl, isProduction, describeDbEnv };
