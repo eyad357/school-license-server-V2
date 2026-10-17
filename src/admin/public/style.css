@@ -116,7 +116,8 @@ button.success {
 }
 
 .container {
-  width: min(1400px, calc(100% - 30px));
+  width: calc(100% - 32px);
+  max-width: 2200px;
   margin: 24px auto;
 }
 
@@ -475,37 +476,44 @@ tr.is-archived td { opacity: .55; }
 .tabs { display: flex; gap: 6px; padding: 0 24px; margin: 12px 0 0; }
 .tabs .seg.active { background: #2f5d9e; color: #fff; }
 
-/* ---------- licenses table usability (v2.1) ---------- */
-/* The actions column is the last (leftmost in RTL) column. The table is wider
-   than the viewport, so it used to be clipped. Keep it pinned and visible. */
-.table-wrapper { scrollbar-width: thin; }
-.table-wrapper table { min-width: 0; }
-.table-wrapper th,
-.table-wrapper td { padding: 10px 8px; white-space: nowrap; }
-.table-wrapper th { font-size: 12px; }
-.table-wrapper td { font-size: 13px; }
-
-#licensesTableBody td:last-child,
-.table-wrapper thead th:last-child {
+/* ---- Licenses table: compact, and the actions column always visible ----
+   The table has 15 columns; in RTL the "الإدارة" column is the left-most one and
+   used to scroll out of view. It is now pinned to the left edge. */
+.licenses-table { min-width: 0; font-size: 13px; }
+.licenses-table th,
+.licenses-table td { padding: 9px 7px; vertical-align: middle; }
+.licenses-table th { white-space: nowrap; font-size: 12px; }
+.licenses-table .key { font-size: 11.5px; }
+.licenses-table .actions {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 4px;
+  justify-content: start;
+}
+.licenses-table .actions button { padding: 5px 8px; font-size: 12px; white-space: nowrap; }
+.licenses-table thead th:last-child,
+.licenses-table tbody td:last-child {
   position: sticky;
   left: 0;
   z-index: 2;
   background: #fff;
-  box-shadow: 6px 0 8px -6px rgba(0, 0, 0, .18);
+  box-shadow: 8px 0 10px -8px rgba(15, 23, 42, .25);
 }
-#licensesTableBody tr:hover td:last-child { background: #f8fafc; }
+.licenses-table thead th:last-child { z-index: 3; }
+.licenses-table tr.is-archived td:last-child { background: #f7f7f8; opacity: 1; }
+@media (max-width: 900px) { .licenses-table { min-width: 0; } }
 
-#licensesTableBody .actions {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
+/* Fit the 15 columns to the available width instead of scrolling: on narrower screens the long
+   cells (license key, name, program, dates) wrap; nothing is hidden or removed. */
+@media (max-width: 1500px) {
+  .licenses-table .key-cell { flex-wrap: wrap; }
+  .licenses-table .key { white-space: normal; overflow-wrap: anywhere; max-width: 17ch; }
+  .licenses-table th { white-space: normal; line-height: 1.25; }
+  .licenses-table th.narrow { width: 28px; }
 }
-#licensesTableBody .actions button {
-  padding: 7px 12px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-@media (max-width: 900px) {
-  .table-wrapper table { min-width: 0; }
+@media (max-width: 1250px) {
+  .licenses-table th,
+  .licenses-table td { padding: 8px 4px; }
+  .licenses-table { font-size: 12px; }
+  .licenses-table .actions button { padding: 4px 6px; font-size: 11px; }
 }
