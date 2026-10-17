@@ -22,6 +22,7 @@
 
 const crypto = require('crypto');
 const { Client } = require('pg');
+const { resolveDatabaseUrl } = require('../db/config');
 const pool = require('../db/pool');
 
 const CHANNEL = 'license_events';
@@ -98,7 +99,7 @@ class EventHub {
     if (!this.started) return;
     this._listenRetry = setTimeout(async () => {
       if (!this.started) return;
-      const c = new Client({ connectionString: process.env.DATABASE_URL });
+      const c = new Client({ connectionString: resolveDatabaseUrl() });
       c.on('error', () => {});
       try {
         await c.connect();
