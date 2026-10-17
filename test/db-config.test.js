@@ -118,3 +118,23 @@ test('the startup error names the database variables the process can see, never 
   );
   assert.throws(() => resolveDatabaseUrl({ NODE_ENV: 'production' }), /database variables: none/);
 });
+
+test('describeDbEnv reports shape and build identity but never values', () => {
+  const { describeDbEnv } = require('../src/db/config');
+  const secret = 'S3cretPassw0rd';
+  const out = describeDbEnv({
+    DATABASE_URL: `postgres://u:${secret}@h.railway.internal:5432/db`,
+    PGPASSWORD: secret,
+    DATABASE_PUBLIC_URL: '${{Postgres.DATABASE_URL}}',
+    POSTGRES_DB: '',
+    RAILWAY_SERVICE_NAME: 'svc',
+    RAILWAY_GIT_COMMIT_SHA: 'b2c8c5e10916c3793219f5105274cb80b1ac56d3'
+  });
+  assert.ok(!out.includes(secret));
+  assert.ok(!out.includes('railway.internal'));
+  assert.match(out, /DATABASE_URL=set\(len \d+\)/);
+  assert.match(out, /DATABASE_PUBLIC_URL=set\(len \d+, unresolved-template\)/);
+  assert.match(out, /POSTGRES_DB=EMPTY\(len 0\)/);
+  assert.match(out, /RAILWAY_GIT_COMMIT_SHA=b2c8c5e[,;. ]/);
+  assert.ok(!out.includes('b2c8c5e10916'));
+});

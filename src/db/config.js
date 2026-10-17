@@ -34,14 +34,30 @@ function describeDbEnv(env = process.env) {
   const parts = Object.keys(env)
     .filter((k) => /^(DATABASE|POSTGRES|PG[A-Z_]*$)/.test(k))
     .sort()
-    .map((k) => `${k}=${String(env[k]).trim() === '' ? 'EMPTY' : 'set'}`);
-  const where = ['RAILWAY_SERVICE_NAME', 'RAILWAY_ENVIRONMENT_NAME']
+    .map((k) => {
+      const v = String(env[k]);
+      if (v.trim() === '') return `${k}=EMPTY(len ${v.length})`;
+      // Only shape flags, never content.
+      const flags = [];
+      if (v.includes('${')) flags.push('unresolved-template');
+      if (/^["']|["']$/.test(v.trim())) flags.push('wrapped-in-quotes');
+      if (v !== v.trim()) flags.push('has-outer-whitespace');
+      return `${k}=set(len ${v.length}${flags.length ? ', ' + flags.join('/') : ''})`;
+    });
+  // Non-secret identity of the running service/build, to prove WHICH deployment
+  // produced this message.
+  const where = [
+    'RAILWAY_SERVICE_NAME', 'RAILWAY_ENVIRONMENT_NAME', 'RAILWAY_GIT_BRANCH',
+    'RAILWAY_DEPLOYMENT_ID', 'RAILWAY_REPLICA_ID'
+  ]
     .filter((k) => env[k])
     .map((k) => `${k}=${env[k]}`);
+  if (env.RAILWAY_GIT_COMMIT_SHA) where.push(`RAILWAY_GIT_COMMIT_SHA=${String(env.RAILWAY_GIT_COMMIT_SHA).slice(0, 7)}`);
+  where.push(`total_env_vars=${Object.keys(env).length}`, `cwd=${process.cwd()}`);
 
   return (
     `Seen by this process - database variables: ${parts.length ? parts.join(', ') : 'none'}` +
-    (where.length ? `; ${where.join(', ')}` : '') + '.'
+    `; ${where.join(', ')}.`
   );
 }
 
