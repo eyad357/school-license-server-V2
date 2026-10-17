@@ -474,3 +474,38 @@ tr.is-archived td { opacity: .55; }
 
 .tabs { display: flex; gap: 6px; padding: 0 24px; margin: 12px 0 0; }
 .tabs .seg.active { background: #2f5d9e; color: #fff; }
+
+/* ---------- licenses table usability (v2.1) ---------- */
+/* The actions column is the last (leftmost in RTL) column. The table is wider
+   than the viewport, so it used to be clipped. Keep it pinned and visible. */
+.table-wrapper { scrollbar-width: thin; }
+.table-wrapper table { min-width: 0; }
+.table-wrapper th,
+.table-wrapper td { padding: 10px 8px; white-space: nowrap; }
+.table-wrapper th { font-size: 12px; }
+.table-wrapper td { font-size: 13px; }
+
+#licensesTableBody td:last-child,
+.table-wrapper thead th:last-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fff;
+  box-shadow: 6px 0 8px -6px rgba(0, 0, 0, .18);
+}
+#licensesTableBody tr:hover td:last-child { background: #f8fafc; }
+
+#licensesTableBody .actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+#licensesTableBody .actions button {
+  padding: 7px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .table-wrapper table { min-width: 0; }
+}
