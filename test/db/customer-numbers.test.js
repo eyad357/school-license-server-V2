@@ -13,7 +13,8 @@ const KEY_FORMAT = /^SCHL-[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$/;
 let idem = 0;
 const newIdem = () => `test-batch-${Date.now()}-${++idem}`;
 
-const bulk = (input) => createBulkLicenses({ productId: 'school-accreditation', idempotencyKey: newIdem(), ...input });
+const { bulkWithSales } = require('./helpers/bulk');
+const bulk = (input) => bulkWithSales(input);
 
 async function dbCounts() {
   const { rows } = await pool.query(`
@@ -63,15 +64,11 @@ test('6. 100 licenses: keys and customer numbers are unique, numbers run 1..100 
   assert.equal(rows[0].n, 100);
 });
 
-test('7. 1000 licenses via the HTTP API (large body) complete; 0 / 1001 are rejected', async () => {
-  const customers = Array.from({ length: 1000 }, (_, i) => ({
-    name: `مدرسة النور النموذجية للبنات والبنين رقم ${i + 1}`,
-  }));
-
+test('7. 1000 licenses via the HTTP API complete; 0 / 1001 are rejected', async () => {
   const started = Date.now();
   const res = await admin('POST', '/licenses/bulk', {
     headers: { 'Idempotency-Key': newIdem() },
-    body: { productId: 'school-accreditation', customers, maxDevices: 1, duration: 'lifetime', plan: 'pro' },
+    body: { productId: 'school-accreditation', quantity: 1000, maxDevices: 1, duration: 'lifetime', plan: 'pro' },
   });
   const ms = Date.now() - started;
 
@@ -98,58 +95,50 @@ test('7. 1000 licenses via the HTTP API (large body) complete; 0 / 1001 are reje
   assert.equal((await dbCounts()).licenses, 1000, 'rejected requests created nothing');
 });
 
-test('8. customers with pre-entered names and without names', async () => {
-  // --- with names: row i <-> license i <-> number i+1 -----------------------
-  const names = ['مدرسة النور', 'مدرسة المستقبل', 'مدرسة الأمل'];
-  const named = await bulk({ productId: 'school-accreditation', customers: names.map((name) => ({ name })), maxDevices: 3, plan: 'pro' });
+test('8. keys are created anonymous and UNSOLD; legacy "names" payloads are refused; data is added later', async () => {
+  const before0 = await dbCounts();
 
-  assert.deepEqual(named.items.map((i) => i.customerName), names);
-  assert.deepEqual(named.items.map((i) => i.customerNumber), [1, 2, 3]);
-  assert.ok(named.items.every((i) => i.maxDevices === 3));
+  // --- legacy payloads are rejected clearly and create nothing -----------------
+  for (const legacy of [
+    { customers: [{ name: 'مدرسة النور' }] },
+    { quantity: 2, customers: ['أ', 'ب'] },
+    { quantity: 2, defaults: { salePrice: '100', currency: 'EGP' } },
+  ]) {
+    await assert.rejects(
+      () => createBulkLicenses({ productId: 'school-accreditation', idempotencyKey: newIdem(), ...legacy }),
+      (e) => e.statusCode === 400 && /أسماء العملاء/.test(e.message)
+    );
+  }
+  assert.deepEqual(await dbCounts(), before0, 'nothing was created');
 
-  const { rows } = await pool.query(
-    `SELECT c.customer_number, c.name, l.license_key
-       FROM customers c JOIN licenses l ON l.customer_id = c.id
-      ORDER BY c.customer_number`
+  // --- anonymous batch: numbers exist, no customer data, status unsold ---------
+  const unnamed = await createBulkLicenses({ productId: 'school-accreditation', idempotencyKey: newIdem(), quantity: 4, maxDevices: 1 });
+  assert.deepEqual(unnamed.items.map((i) => i.customerNumber), [1, 2, 3, 4]);
+  assert.ok(unnamed.items.every((i) => i.saleStatus === 'unsold'));
+  assert.ok(!('customerName' in unnamed.items[0]), 'response carries no customer name');
+
+  const { rows: raw } = await pool.query(
+    'SELECT name, email, phone, sale_price, currency, sold_at, notes, sale_status, payment_status FROM customers'
   );
-  assert.deepEqual(rows.map((r) => r.name), names);
-  assert.deepEqual(rows.map((r) => r.license_key), named.items.map((i) => i.licenseKey));
+  assert.equal(raw.length, 4);
+  assert.ok(raw.every((r) => r.name === null && r.email === null && r.phone === null && r.sale_price === null
+    && r.currency === null && r.sold_at === null && r.notes === null && r.sale_status === 'unsold' && r.payment_status === null));
 
-  // --- count mismatch: nothing is created --------------------------------------
-  const before = await dbCounts();
-  await assert.rejects(
-    () => bulk({ productId: 'school-accreditation', quantity: 5, customers: names.map((name) => ({ name })) }),
-    (e) => e.statusCode === 400 && /لا يطابق/.test(e.message) && /لم يتم إنشاء/.test(e.message)
-  );
-  assert.deepEqual(await dbCounts(), before);
+  // unsold keys are NOT "incomplete" (they are simply not sold yet)
+  const incomplete = await admin('GET', '/license-records?incomplete=1&pageSize=200');
+  assert.equal(incomplete.status, 200);
+  assert.equal(incomplete.json.rows.length, 0);
 
-  // --- a blank name in a "with names" list is rejected with the row number ------
-  await assert.rejects(
-    () => bulk({ productId: 'school-accreditation', customers: [{ name: 'مدرسة صحيحة' }, { name: '   ' }] }),
-    (e) => e.statusCode === 400 && /السطر 2/.test(e.message)
-  );
-  assert.deepEqual(await dbCounts(), before);
+  const unsold = await admin('GET', '/license-records?saleStatus=unsold&pageSize=200');
+  assert.equal(unsold.json.rows.length, 4);
 
-  // --- same name twice => two separate customers, with a warning ------------------
-  const dup = await bulk({ productId: 'school-accreditation', customers: [{ name: 'مدرسة النور' }, { name: 'مدرسة النور' }] });
-  assert.deepEqual(dup.duplicateNames, ['مدرسة النور']);
-  assert.notEqual(dup.items[0].customerId, dup.items[1].customerId);
-
-  // --- without names: customers exist (so they have numbers) but are incomplete ---
-  const unnamed = await bulk({ productId: 'school-accreditation', quantity: 4, maxDevices: 1 });
-  assert.ok(unnamed.items.every((i) => i.customerName === null && i.customerNumber > 0));
-
-  const list = await admin('GET', '/license-records?incomplete=1&pageSize=200');
-  assert.equal(list.status, 200);
-  const unnamedKeys = new Set(unnamed.items.map((i) => i.licenseKey));
-  assert.ok([...unnamedKeys].every((k) => list.json.rows.some((r) => r.license_key === k)));
-
-  // names can be added afterwards without touching the license
+  // --- a name can be added afterwards without touching the license ----------------
   const target = unnamed.items[0];
   const licenseBefore = (await pool.query('SELECT * FROM licenses WHERE id = $1', [target.licenseId])).rows[0];
   const patch = await admin('PATCH', `/customers/${target.customerId}`, { body: { name: 'مدرسة الإخلاص' } });
   assert.equal(patch.status, 200);
   assert.equal(patch.json.customer.customer_number, target.customerNumber);
+  assert.equal(patch.json.customer.sale_status, 'sold', 'recording a buyer marks the key sold');
   assert.deepEqual(
     (await pool.query('SELECT * FROM licenses WHERE id = $1', [target.licenseId])).rows[0],
     licenseBefore

@@ -60,7 +60,7 @@ after(async () => {
   await closeAll();
 });
 
-test('UI: login, then create customers with names through the screen, see them in the table', async () => {
+test('UI: login, then create 3 keys WITHOUT customer names; they appear as unsold', async () => {
   assert.ok(!$('loginView').classList.contains('hidden'));
 
   $('username').value = 'test-admin';
@@ -70,48 +70,49 @@ test('UI: login, then create customers with names through the screen, see them i
   await until(() => !$('dashboardView').classList.contains('hidden'), 'dashboard visible');
   await until(() => $('licensesTableBody').textContent.includes('لا توجد نتائج'), 'empty table');
 
-  // wrong password shows an error and does not enter
-  // (covered by API tests; here we only check the happy path)
-
   $('createLicenseBtn').click();
   await until(() => $('productSelect').options.length > 1, 'products loaded');
   $('productSelect').value = 'school-accreditation';
   assert.ok(!$('createModal').classList.contains('hidden'));
 
-  type($('namesInput'), 'مدرسة النور\nمدرسة المستقبل | 1500\n\n  مدرسة الأمل  | ٢٠٠٠');
-  assert.match($('namesCount').textContent, /3/);
-  type($('defaultCurrency'), 'egp');
+  // the names / mode controls are GONE from the create screen; no sale fields either
+  for (const id of ['namesInput', 'namesBox', 'namesCount', 'modeNames', 'modeCount', 'countBox',
+    'defaultPrice', 'defaultCurrency', 'defaultSoldAt']) {
+    assert.equal($(id), null, `${id} must not exist`);
+  }
+  assert.ok(!/أسماء العملاء|مع أسماء|بدون أسماء/.test($('createModal').textContent), 'no names wording left');
+  assert.ok($('quantityInput') && $('plan') && $('maxDevices') && $('duration') && $('productSelect'));
+
+  type($('quantityInput'), '3');
   type($('maxDevices'), '2');
 
   $('createLicenseForm').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
 
   await until(() => !$('createResult').classList.contains('hidden'), 'result shown');
-  assert.match($('createMessage').textContent, /تم إنشاء 3 ترخيص/);
+  assert.match($('createMessage').textContent, /تم إنشاء 3 مفتاح/);
   assert.equal($('createResultBody').querySelectorAll('tr').length, 3);
+  assert.equal($('createResultBody').querySelectorAll('[data-copy]').length, 3, 'copy button per key');
+  assert.ok($('exportBatchBtn') && $('exportBatchXlsxBtn'), 'CSV and Excel export of the batch');
 
   await until(() => $('licensesTableBody').querySelectorAll('tr').length === 3, '3 rows in table');
-  const text = $('licensesTableBody').textContent;
-  for (const n of ['مدرسة النور', 'مدرسة المستقبل', 'مدرسة الأمل']) assert.ok(text.includes(n), n);
-  assert.match(text, /1,500\.00/);
-  assert.match(text, /2,000\.00/);
+  assert.ok($('licensesTableBody').textContent.includes('غير مباع'));
   assert.equal($('totalCount').textContent, '3');
-  assert.equal($('incompleteCount').textContent, '1', 'only the first customer has no price');
+  assert.equal($('incompleteCount').textContent, '0', 'unsold keys are not "incomplete"');
 
-  // DB agrees
   const { rows } = await pool.query(
-    'SELECT c.customer_number, c.name, c.sale_price, c.currency, l.max_devices FROM customers c JOIN licenses l ON l.customer_id = c.id ORDER BY 1'
+    `SELECT c.customer_number, c.name, c.sale_price, c.sale_status, l.max_devices
+       FROM customers c JOIN licenses l ON l.customer_id = c.id ORDER BY 1`
   );
-  assert.deepEqual(rows.map((r) => [Number(r.customer_number), r.name, r.sale_price, r.currency, r.max_devices]), [
-    [1, 'مدرسة النور', null, 'EGP', 2], // the shared currency applies; no price was given
-    [2, 'مدرسة المستقبل', '1500.00', 'EGP', 2],
-    [3, 'مدرسة الأمل', '2000.00', 'EGP', 2],
+  assert.deepEqual(rows.map((r) => [Number(r.customer_number), r.name, r.sale_price, r.sale_status, r.max_devices]), [
+    [1, null, null, 'unsold', 2],
+    [2, null, null, 'unsold', 2],
+    [3, null, null, 'unsold', 2],
   ]);
 });
 
 test('UI: clicking Create twice quickly sends one operation (same idempotency key)', async () => {
   const before = (await pool.query('SELECT COUNT(*)::int AS n FROM licenses')).rows[0].n;
 
-  $('modeCount').click();
   type($('quantityInput'), '4');
 
   const submit = () => $('createLicenseForm').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
@@ -123,15 +124,19 @@ test('UI: clicking Create twice quickly sends one operation (same idempotency ke
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM licenses')).rows[0].n, before + 4);
 });
 
-test('UI: search by number and Arabic partial name, sort, edit customer, export', async () => {
+test('UI: search, sort, filters, record the sale after creation, export', async () => {
+  // record a buyer for #2 directly (as if done earlier), without a price
+  await pool.query("UPDATE customers SET name = 'مدرسة المستقبل', sale_status = 'sold' WHERE customer_number = 2");
+  $('refreshBtn').click();
+
   // search by number
   type($('searchInput'), '#2');
   await until(() => $('licensesTableBody').querySelectorAll('tr').length === 1, 'one result for #2');
   assert.ok($('licensesTableBody').textContent.includes('مدرسة المستقبل'));
 
   // partial Arabic name
-  type($('searchInput'), 'الأمل');
-  await until(() => $('licensesTableBody').textContent.includes('مدرسة الأمل') && $('licensesTableBody').querySelectorAll('tr').length === 1, 'name search');
+  type($('searchInput'), 'المستقبل');
+  await until(() => $('licensesTableBody').textContent.includes('مدرسة المستقبل') && $('licensesTableBody').querySelectorAll('tr').length === 1, 'name search');
 
   // sort by customer number descending
   type($('searchInput'), '');
@@ -141,20 +146,34 @@ test('UI: search by number and Arabic partial name, sort, edit customer, export'
   w.document.querySelector('th[data-sort="customer_number"]').click();
   await until(() => $('licensesTableBody').querySelector('.cust-no').textContent === '7', 'sorted desc');
 
-  // incomplete filter
+  // "sold but data missing" filter: only #2 (sold, no price)
   $('incompleteFilter').checked = true;
   $('incompleteFilter').dispatchEvent(new w.Event('change', { bubbles: true }));
-  await until(() => $('licensesTableBody').querySelectorAll('tr').length === 5, '5 incomplete rows');
+  await until(() => $('licensesTableBody').querySelectorAll('tr').length === 1, '1 incomplete row');
   $('incompleteFilter').checked = false;
   $('incompleteFilter').dispatchEvent(new w.Event('change', { bubbles: true }));
   await until(() => $('licensesTableBody').querySelectorAll('tr').length === 7, 'back to 7');
+
+  // sale-status filter
+  $('saleStatusFilter').value = 'unsold';
+  $('saleStatusFilter').dispatchEvent(new w.Event('change', { bubbles: true }));
+  await until(() => $('licensesTableBody').querySelectorAll('tr').length === 6, '6 unsold rows');
+  $('saleStatusFilter').value = '';
+  $('saleStatusFilter').dispatchEvent(new w.Event('change', { bubbles: true }));
+  await until(() => $('licensesTableBody').querySelectorAll('tr').length === 7, 'back to 7 again');
 
   // open customer #1 and record the sale
   const keyBefore = (await pool.query('SELECT license_key, status, max_devices FROM licenses l JOIN customers c ON c.id = l.customer_id WHERE c.customer_number = 1')).rows[0];
   w.document.querySelector('th[data-sort="customer_number"]').click(); // asc
   await until(() => $('licensesTableBody').querySelector('.cust-no').textContent === '1', 'asc again');
   $('licensesTableBody').querySelector('.cust-no').click();
-  await until(() => $('cName').value === 'مدرسة النور', 'customer form filled');
+  await until(() => $('customerModalSub').textContent.includes('1'), 'customer form opened');
+  assert.equal($('cSaleStatus').value, 'unsold');
+  type($('cName'), 'مدرسة النور');
+  type($('cPhone'), '+20 100 123 4567');
+  assert.equal($('cSaleStatus').value, 'sold', 'typing a buyer name marks the key sold in the form');
+  $('cPaymentStatus').value = 'paid';
+  $('cPaymentStatus').dispatchEvent(new w.Event('change', { bubbles: true }));
 
   type($('cPrice'), '1750.5');
   type($('cCurrency'), 'sar');
@@ -164,8 +183,8 @@ test('UI: search by number and Arabic partial name, sort, edit customer, export'
   await until(() => $('customerModal').classList.contains('hidden'), 'modal closed after save');
 
   await until(() => $('licensesTableBody').textContent.includes('1,750.50'), 'price visible in table');
-  const saved = (await pool.query('SELECT sale_price, currency, sold_at::text AS sold, notes FROM customers WHERE customer_number = 1')).rows[0];
-  assert.deepEqual(saved, { sale_price: '1750.50', currency: 'SAR', sold: '2026-09-30', notes: 'تم الدفع كاملًا' });
+  const saved = (await pool.query('SELECT name, phone, sale_status, payment_status, sale_price, currency, sold_at::text AS sold, notes FROM customers WHERE customer_number = 1')).rows[0];
+  assert.deepEqual(saved, { name: 'مدرسة النور', phone: '+20 100 123 4567', sale_status: 'sold', payment_status: 'paid', sale_price: '1750.50', currency: 'SAR', sold: '2026-09-30', notes: 'تم الدفع كاملًا' });
 
   const keyAfter = (await pool.query('SELECT license_key, status, max_devices FROM licenses l JOIN customers c ON c.id = l.customer_id WHERE c.customer_number = 1')).rows[0];
   assert.deepEqual(keyAfter, keyBefore, 'license untouched by the customer edit');
@@ -241,8 +260,7 @@ test('UI: programs tab lists / adds a program; creating without a program is ref
   const before = (await pool.query('SELECT COUNT(*)::int AS n FROM licenses')).rows[0].n;
   $('createLicenseBtn').click();
   assert.equal($('productSelect').value, '');
-  $('modeNames').click();
-  type($('namesInput'), 'بدون برنامج');
+  type($('quantityInput'), '1');
   $('createLicenseForm').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
   await new Promise((r) => setTimeout(r, 300));
   assert.match($('createMessage').textContent, /اختر البرنامج/);
@@ -257,5 +275,5 @@ test('UI: programs tab lists / adds a program; creating without a program is ref
 
   $('productFilter').value = 'ui-second';
   $('productFilter').dispatchEvent(new w.Event('change', { bubbles: true }));
-  await until(() => $('licensesTableBody').querySelectorAll('tr').length === 1 && $('licensesTableBody').textContent.includes('بدون برنامج'), 'filtered rows');
+  await until(() => $('licensesTableBody').querySelectorAll('tr').length === 1 && $('licensesTableBody').textContent.includes('غير مباع'), 'filtered rows');
 });

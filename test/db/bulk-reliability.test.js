@@ -57,7 +57,7 @@ test('14a. the same request twice (double click / retry) creates the licenses on
   const key = newIdem();
   const input = { productId: 'school-accreditation',
     idempotencyKey: key,
-    customers: ['مدرسة 1', 'مدرسة 2', 'مدرسة 3'].map((name) => ({ name })),
+    quantity: 3,
     maxDevices: 2,
   };
 
@@ -126,7 +126,7 @@ test('14d. a missing or malformed idempotency key is refused before anything is 
 
 test('14e. a failure in the middle of creation leaves NOTHING behind and wastes no number', async () => {
   const key = newIdem();
-  const input = { productId: 'school-accreditation', idempotencyKey: key, customers: [{ name: 'أ' }, { name: 'ب' }, { name: 'ج' }] };
+  const input = { productId: 'school-accreditation', idempotencyKey: key, quantity: 3 };
   const before = await state();
 
   const db = faultyDb((sql) =>
@@ -239,7 +239,7 @@ test('14h. HTTP: database outage returns a generic error, leaks nothing, creates
 
 test('14i. HTTP: two simultaneous identical POSTs (double click) create one batch', async () => {
   const headers = { 'Idempotency-Key': newIdem() };
-  const body = { productId: 'school-accreditation', customers: [{ name: 'مدرسة النقر المزدوج' }], maxDevices: 1 };
+  const body = { productId: 'school-accreditation', quantity: 1, maxDevices: 1 };
 
   const [a, b] = await Promise.all([
     admin('POST', '/licenses/bulk', { headers, body }),

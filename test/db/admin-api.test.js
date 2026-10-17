@@ -13,7 +13,8 @@ const { createBulkLicenses } = require('../../src/services/bulkLicenseService');
 
 let idem = 0;
 const newIdem = () => `api-batch-${Date.now()}-${++idem}`;
-const bulk = (input) => createBulkLicenses({ productId: 'school-accreditation', idempotencyKey: newIdem(), ...input });
+const { bulkWithSales } = require('./helpers/bulk');
+const bulk = (input) => bulkWithSales(input);
 
 const API = '/api/v1/licenses';
 const act = (licenseKey, deviceId) => request('POST', `${API}/activate`, { body: { licenseKey, deviceId } });
@@ -240,7 +241,7 @@ test('13b. CSV export: Arabic is intact, quoting is right, formulas are neutrali
   assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'UTF-8 BOM present');
 
   const text = bytes.toString('utf8').replace(/^\uFEFF/, '');
-  assert.ok(text.includes('رقم العميل') && text.includes('مفتاح التفعيل') && text.includes('سعر البيع'));
+  assert.ok(text.includes('رقم العميل') && text.includes('مفتاح التفعيل') && text.includes('السعر الفعلي'));
   assert.ok(text.includes('مدرسة النور'));
   assert.ok(text.includes('"مدرسة ""المستقبل"" الدولية"'), 'embedded quotes are doubled');
   assert.ok(text.includes('"ملاحظة, بها فاصلة"'), 'comma stays inside the quoted field');
@@ -263,7 +264,7 @@ test('13b. CSV export: Arabic is intact, quoting is right, formulas are neutrali
     else field += ch;
   }
   assert.equal(records.length, 1 + 60 + 3, 'header + every record');
-  assert.ok(records.every((r) => r.length === 12), 'always 12 columns');
+  assert.ok(records.every((r) => r.length === require('../../src/services/exportService').COLUMNS.length), 'same column count on every record');
 
   // every dangerous leading character got an apostrophe
   const cells = records.flat();
@@ -312,7 +313,7 @@ test('13c. XLSX export opens correctly; numbers are numbers, text never becomes 
     row.eachCell({ includeEmpty: false }, (cell) => {
       assert.notEqual(typeof cell.value, 'object', `cell ${cell.address} is a rich/formula object`);
       assert.ok(!cell.formula, `cell ${cell.address} became a formula`);
-      if (cell.col === 7) { sawPrice = true; assert.equal(typeof cell.value, 'number'); }
+      if (cell.col === 15) { sawPrice = true; assert.equal(typeof cell.value, 'number'); }
       if (cell.value === "'=1+1") sawNeutralised = true;
     });
   });
@@ -420,7 +421,7 @@ test('15b. body-size handling: big bodies are checked for auth FIRST; other rout
   assert.equal(unauth.status, 401, 'rejected on auth, not parsed');
 
   const huge = await admin('POST', '/licenses/bulk', {
-    body: { productId: 'school-accreditation', customers: [{ name: 'x'.repeat(2 * 1024 * 1024) }] },
+    body: { productId: 'school-accreditation', quantity: 1, junk: 'x'.repeat(2 * 1024 * 1024) },
     headers: { 'Idempotency-Key': newIdem() },
   });
   assert.equal(huge.status, 413, 'still capped at 1mb');

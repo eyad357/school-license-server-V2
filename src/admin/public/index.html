@@ -108,9 +108,29 @@
           <option value="only">المؤرشفون فقط</option>
         </select>
 
+        <select id="saleStatusFilter" aria-label="حالة البيع">
+          <option value="">البيع: الكل</option>
+          <option value="unsold">غير مباع</option>
+          <option value="sold">مباع</option>
+        </select>
+
+        <select id="paymentStatusFilter" aria-label="حالة الدفع">
+          <option value="">الدفع: الكل</option>
+          <option value="unpaid">غير مدفوع</option>
+          <option value="paid">مدفوع</option>
+          <option value="partial">جزئي</option>
+          <option value="none">غير محدد</option>
+        </select>
+
+        <select id="activationFilter" aria-label="حالة التفعيل">
+          <option value="">التفعيل: الكل</option>
+          <option value="activated">مفعّل</option>
+          <option value="not_activated">غير مفعّل</option>
+        </select>
+
         <label class="check">
           <input id="incompleteFilter" type="checkbox">
-          ناقصة البيانات فقط
+          مباعة وبياناتها ناقصة
         </label>
 
         <span class="spacer"></span>
@@ -119,6 +139,8 @@
           <option value="search">تصدير: النتائج الحالية</option>
           <option value="all">تصدير: الكل</option>
           <option value="selected">تصدير: المحدد</option>
+          <option value="unsold">تصدير: المفاتيح غير المباعة فقط</option>
+          <option value="sold">تصدير: التراخيص المباعة فقط</option>
         </select>
         <button id="exportXlsxBtn" class="secondary" type="button">Excel</button>
         <button id="exportCsvBtn" class="secondary" type="button">CSV</button>
@@ -137,7 +159,10 @@
                 <th class="sortable" data-sort="customer_name">اسم العميل</th>
                 <th class="sortable" data-sort="license_key">مفتاح التفعيل</th>
                 <th>البرنامج</th>
-                <th class="sortable" data-sort="status">الحالة</th>
+                <th class="sortable" data-sort="status">حالة الترخيص</th>
+                <th class="sortable" data-sort="sale_status">البيع</th>
+                <th class="sortable" data-sort="payment_status">الدفع</th>
+                <th>التفعيل</th>
                 <th class="sortable" data-sort="active_devices">الأجهزة</th>
                 <th class="sortable" data-sort="sale_price">سعر البيع</th>
                 <th>العملة</th>
@@ -236,7 +261,7 @@
       <div class="modal-header">
         <div>
           <h2>إنشاء تراخيص</h2>
-          <div class="muted">من 1 إلى 1000 ترخيص في العملية الواحدة. تُنفَّذ كلها أو لا يُنفَّذ شيء.</div>
+          <div class="muted">من 1 إلى 1000 مفتاح في العملية الواحدة. تُنفَّذ كلها أو لا يُنفَّذ شيء.</div>
         </div>
         <button class="icon-button" data-close="createModal">×</button>
       </div>
@@ -249,25 +274,11 @@
         </select>
         <div class="muted small">لا يوجد برنامج افتراضي؛ يجب اختيار البرنامج صراحةً.</div>
 
-        <div class="segmented" role="tablist">
-          <button type="button" id="modeNames" class="seg active" data-mode="names">مع أسماء العملاء</button>
-          <button type="button" id="modeCount" class="seg" data-mode="count">بدون أسماء (كمية فقط)</button>
-        </div>
-
-        <div id="namesBox">
-          <label for="namesInput">أسماء العملاء — اسم واحد في كل سطر</label>
-          <textarea id="namesInput" rows="7" dir="auto"
-            placeholder="مدرسة النور&#10;مدرسة المستقبل | 1500&#10;مدرسة الأمل | 2000"></textarea>
-          <div class="muted small">
-            اختياري: اكتب السعر بعد الرمز | في نفس السطر. كل سطر = عميل جديد برقمه وترخيصه، بنفس الترتيب.
-          </div>
-          <div id="namesCount" class="muted small"></div>
-        </div>
-
-        <div id="countBox" class="hidden">
-          <label for="quantityInput">عدد التراخيص</label>
-          <input id="quantityInput" type="number" min="1" max="1000" value="1">
-          <div class="muted small">يُنشأ لكل ترخيص عميل برقم مستقل، ويمكن إضافة الاسم والسعر لاحقًا.</div>
+        <label for="quantityInput">عدد المفاتيح</label>
+        <input id="quantityInput" type="number" min="1" max="1000" value="1" required>
+        <div class="muted small">
+          تُنشأ مفاتيح فريدة بدون أي بيانات عميل (حالتها «غير مباع»، ولكل مفتاح رقم سجل ثابت).
+          اسم العميل والسعر وتاريخ البيع تُسجَّل لاحقًا داخل سجل المفتاح بعد البيع.
         </div>
 
         <div class="grid-2">
@@ -288,22 +299,6 @@
               <option value="1_year">سنة</option>
             </select>
           </div>
-          <div>
-            <label for="defaultSoldAt">تاريخ البيع (اختياري)</label>
-            <input id="defaultSoldAt" type="date">
-          </div>
-          <div>
-            <label for="defaultPrice">سعر موحد (اختياري)</label>
-            <input id="defaultPrice" inputmode="decimal" placeholder="مثال: 1500">
-          </div>
-          <div>
-            <label for="defaultCurrency">العملة</label>
-            <input id="defaultCurrency" list="currencies" maxlength="3" placeholder="EGP" style="text-transform:uppercase">
-            <datalist id="currencies">
-              <option value="EGP"><option value="SAR"><option value="USD">
-              <option value="EUR"><option value="AED"><option value="KWD">
-            </datalist>
-          </div>
         </div>
 
         <div id="createMessage" class="message"></div>
@@ -314,11 +309,12 @@
             <span class="spacer"></span>
             <button type="button" id="copyAllKeysBtn" class="secondary">نسخ كل المفاتيح</button>
             <button type="button" id="exportBatchBtn" class="secondary">تصدير الدفعة (CSV)</button>
+            <button type="button" id="exportBatchXlsxBtn" class="secondary">تصدير الدفعة (Excel)</button>
           </div>
           <div class="table-wrapper result-table">
             <table>
               <thead>
-                <tr><th>رقم العميل</th><th>الاسم</th><th>مفتاح التفعيل</th></tr>
+                <tr><th>#</th><th>رقم السجل</th><th>مفتاح التفعيل</th><th>حالة البيع</th><th></th></tr>
               </thead>
               <tbody id="createResultBody"></tbody>
             </table>
@@ -327,7 +323,7 @@
 
         <div class="modal-actions">
           <button type="button" class="secondary" data-close="createModal">إغلاق</button>
-          <button type="submit" id="createSubmitBtn">إنشاء</button>
+          <button type="submit" id="createSubmitBtn">إنشاء الدفعة</button>
         </div>
 
       </form>
@@ -353,11 +349,31 @@
         <div class="grid-2">
           <div>
             <label for="cName">اسم العميل</label>
-            <input id="cName" maxlength="255" required>
+            <input id="cName" maxlength="255">
           </div>
           <div>
             <label for="cEmail">البريد الإلكتروني</label>
             <input id="cEmail" type="email" maxlength="320">
+          </div>
+          <div>
+            <label for="cPhone">الهاتف / وسيلة الاتصال</label>
+            <input id="cPhone" maxlength="40" dir="ltr" inputmode="tel">
+          </div>
+          <div>
+            <label for="cSaleStatus">حالة البيع</label>
+            <select id="cSaleStatus">
+              <option value="unsold">غير مباع</option>
+              <option value="sold">مباع</option>
+            </select>
+          </div>
+          <div>
+            <label for="cPaymentStatus">حالة الدفع</label>
+            <select id="cPaymentStatus">
+              <option value="">غير محدد</option>
+              <option value="unpaid">غير مدفوع</option>
+              <option value="paid">مدفوع</option>
+              <option value="partial">جزئي</option>
+            </select>
           </div>
           <div>
             <label for="cPrice">سعر البيع الفعلي</label>

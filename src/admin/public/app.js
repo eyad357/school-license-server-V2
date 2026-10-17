@@ -11,7 +11,6 @@ const state = {
   total: 0,
   totalPages: 1,
   loadSeq: 0,
-  createMode: 'names',
   createKey: null,
   createBusy: false,
   lastBatchLicenseIds: [],
@@ -80,6 +79,18 @@ function formatMoney(value) {
 function newKey() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return `k-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function saleBadge(status) {
+  return status === 'sold'
+    ? '<span class="badge active">مباع</span>'
+    : '<span class="badge warn">غير مباع</span>';
+}
+
+function paymentBadge(row) {
+  if (row.sale_status !== 'sold') return '—';
+  const map = { paid: 'مدفوع', unpaid: 'غير مدفوع', partial: 'جزئي' };
+  return escapeHtml(map[row.payment_status] || 'غير محدد');
 }
 
 function statusBadge(status) {
@@ -161,6 +172,9 @@ function currentFilters() {
     status: $('statusFilter').value,
     productId: $('productFilter').value,
     archived: $('archivedFilter').value,
+    saleStatus: $('saleStatusFilter').value,
+    paymentStatus: $('paymentStatusFilter').value,
+    activation: $('activationFilter').value,
     incomplete: $('incompleteFilter').checked ? '1' : '',
     sort: state.sort,
     dir: state.dir,
@@ -191,7 +205,7 @@ function renderRows() {
   const body = $('licensesTableBody');
 
   if (!state.rows.length) {
-    body.innerHTML = '<tr><td colspan="12">لا توجد نتائج.</td></tr>';
+    body.innerHTML = '<tr><td colspan="15">لا توجد نتائج.</td></tr>';
     return;
   }
 
@@ -199,7 +213,8 @@ function renderRows() {
     const key = rowKey(row);
     const hasLicense = Boolean(row.license_id);
     const hasCustomer = Boolean(row.customer_id);
-    const incomplete = !hasCustomer || !row.customer_name || row.sale_price === null;
+    const sold = row.sale_status === 'sold';
+    const incomplete = !hasCustomer || (sold && (!row.customer_name || row.sale_price === null));
 
     const numberCell = hasCustomer
       ? `<button class="cust-no" type="button" data-action="customer" data-key="${escapeHtml(key)}">${escapeHtml(row.customer_number)}</button>`
@@ -207,7 +222,7 @@ function renderRows() {
 
     const nameCell = hasCustomer
       ? `<button class="link-btn" type="button" data-action="customer" data-key="${escapeHtml(key)}">
-           <bdi>${escapeHtml(row.customer_name || 'بدون اسم')}</bdi></button>
+           <bdi>${escapeHtml(row.customer_name || (sold ? 'بدون اسم' : 'غير مباع — سجّل البيع'))}</bdi></button>
          ${row.archived_at ? '<span class="badge inactive">مؤرشف</span>' : ''}
          ${incomplete ? '<span class="badge warn">ناقص</span>' : ''}`
       : `<span class="muted">بدون عميل</span> <span class="badge warn">ناقص</span>
@@ -243,6 +258,9 @@ function renderRows() {
         <td>${keyCell}</td>
         <td>${hasLicense ? `<bdi title="${escapeHtml(row.product_id)}">${escapeHtml(row.product_name || row.product_id)}</bdi>` : '—'}</td>
         <td>${statusBadge(row.status)}</td>
+        <td>${hasCustomer ? saleBadge(row.sale_status) : '—'}</td>
+        <td>${paymentBadge(row)}</td>
+        <td>${hasLicense ? (row.active_devices > 0 ? 'مفعّل' : 'غير مفعّل') : '—'}</td>
         <td class="num">${hasLicense ? `${escapeHtml(row.active_devices)} / ${escapeHtml(row.max_devices)}` : '—'}</td>
         <td class="num">${formatMoney(row.sale_price)}</td>
         <td>${escapeHtml(row.currency || '—')}</td>
@@ -302,32 +320,6 @@ function reloadFromFirstPage() {
 
 /* ------------------------------------------------------------------- create */
 
-function parseNamesInput() {
-  return $('namesInput').value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [name, price] = line.split('|').map((part) => part.trim());
-      const entry = { name };
-      if (price) entry.salePrice = price;
-      return entry;
-    });
-}
-
-function updateNamesCount() {
-  const n = parseNamesInput().length;
-  $('namesCount').textContent = n ? `عدد العملاء المُدخلين: ${n}${n > 1000 ? ' (الحد الأقصى 1000)' : ''}` : '';
-}
-
-function setCreateMode(mode) {
-  state.createMode = mode;
-  $('modeNames').classList.toggle('active', mode === 'names');
-  $('modeCount').classList.toggle('active', mode === 'count');
-  $('namesBox').classList.toggle('hidden', mode !== 'names');
-  $('countBox').classList.toggle('hidden', mode !== 'count');
-}
-
 function resetCreateKey() {
   if (!state.createBusy) state.createKey = null;
 }
@@ -361,28 +353,14 @@ async function submitCreate() {
     productId: $('productSelect').value,
   };
 
-  const defaults = {};
-  if ($('defaultPrice').value.trim()) defaults.salePrice = $('defaultPrice').value.trim();
-  if ($('defaultCurrency').value.trim()) defaults.currency = $('defaultCurrency').value.trim().toUpperCase();
-  if ($('defaultSoldAt').value) defaults.soldAt = $('defaultSoldAt').value;
-  if (Object.keys(defaults).length) body.defaults = defaults;
-
-  if (state.createMode === 'names') {
-    const customers = parseNamesInput();
-    if (!customers.length) { message('createMessage', 'أدخل اسم عميل واحدًا على الأقل.', 'error'); return; }
-    if (customers.length > 1000) { message('createMessage', 'الحد الأقصى 1000 ترخيص في العملية الواحدة.', 'error'); return; }
-    body.customers = customers;
-  } else {
-    const quantity = Number($('quantityInput').value);
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
-      message('createMessage', 'العدد يجب أن يكون بين 1 و1000.', 'error');
-      return;
-    }
-    body.quantity = quantity;
+  const quantity = Number($('quantityInput').value);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
+    message('createMessage', 'العدد يجب أن يكون بين 1 و1000.', 'error');
+    return;
   }
+  body.quantity = quantity;
 
-  const n = body.customers ? body.customers.length : body.quantity;
-  if (n > 1 && !confirm(`سيتم إنشاء ${n} ترخيص وعميل. هل تريد المتابعة؟`)) return;
+  if (quantity > 1 && !confirm(`سيتم إنشاء ${quantity} مفتاح. هل تريد المتابعة؟`)) return;
 
   // The same key is reused for double clicks / retries of THIS submission.
   if (!state.createKey) state.createKey = newKey();
@@ -404,14 +382,10 @@ async function submitCreate() {
     message(
       'createMessage',
       data.replayed
-        ? `هذه العملية نُفذت سابقًا — تم عرض نفس النتيجة (${data.quantity} ترخيص) دون إنشاء مكرر.`
-        : `تم إنشاء ${data.quantity} ترخيص بنجاح.`,
+        ? `هذه العملية نُفذت سابقًا — تم عرض نفس النتيجة (${data.quantity} مفتاح) دون إنشاء مكرر.`
+        : `تم إنشاء ${data.quantity} مفتاح بنجاح (غير مباعة).`,
       'success'
     );
-
-    if (data.duplicateNames && data.duplicateNames.length) {
-      toast(`تنبيه: أسماء مكررة (سُجّل كل منها كعميل مستقل): ${data.duplicateNames.slice(0, 5).join('، ')}`);
-    }
 
     await loadRecords();
   } catch (error) {
@@ -428,12 +402,14 @@ async function submitCreate() {
 
 function showCreateResult(data) {
   state.lastBatchLicenseIds = data.items.map((i) => i.licenseId);
-  $('createResultTitle').textContent = `${data.items.length} ترخيص`;
-  $('createResultBody').innerHTML = data.items.map((i) => `
+  $('createResultTitle').textContent = `${data.items.length} مفتاح`;
+  $('createResultBody').innerHTML = data.items.map((i, idx) => `
     <tr>
+      <td class="num">${idx + 1}</td>
       <td class="num">${escapeHtml(i.customerNumber)}</td>
-      <td><bdi>${escapeHtml(i.customerName || '—')}</bdi></td>
       <td><span class="key">${escapeHtml(i.licenseKey)}</span></td>
+      <td>${saleBadge(i.saleStatus)}</td>
+      <td><button class="copy-btn" type="button" data-copy="${escapeHtml(i.licenseKey)}">نسخ</button></td>
     </tr>`).join('');
   $('createResult').classList.remove('hidden');
   $('createResult').dataset.keys = data.items.map((i) => i.licenseKey).join('\n');
@@ -444,6 +420,9 @@ function showCreateResult(data) {
 function setCustomerForm(c) {
   $('cName').value = c.name || '';
   $('cEmail').value = c.email || '';
+  $('cPhone').value = c.phone || '';
+  $('cSaleStatus').value = c.sale_status || 'sold';
+  $('cPaymentStatus').value = c.payment_status || '';
   $('cPrice').value = c.sale_price === null || c.sale_price === undefined ? '' : c.sale_price;
   $('cCurrency').value = c.currency || '';
   $('cSoldAt').value = c.sold_at || '';
@@ -455,7 +434,7 @@ async function openCustomer(row) {
   message('customerMessage');
   $('customerLicenseId').value = '';
   $('customerRef').value = row.customer_id;
-  $('customerModalTitle').textContent = 'بيانات العميل';
+  $('customerModalTitle').textContent = 'سجل المفتاح وبيانات البيع';
   $('customerModalSub').textContent = 'جارٍ التحميل...';
   $('customerLicensesBox').classList.remove('hidden');
   $('customerLicensesBody').innerHTML = '';
@@ -504,6 +483,9 @@ function customerPayload() {
   return {
     name: $('cName').value.trim(),
     email: $('cEmail').value.trim() || null,
+    phone: $('cPhone').value.trim() || null,
+    saleStatus: $('cSaleStatus').value,
+    paymentStatus: $('cPaymentStatus').value || null,
     salePrice: $('cPrice').value.trim() || null,
     currency: $('cCurrency').value.trim().toUpperCase() || null,
     soldAt: $('cSoldAt').value || null,
@@ -516,7 +498,10 @@ async function saveCustomer() {
   const ref = $('customerRef').value;
   const payload = customerPayload();
 
-  if (!payload.name) { message('customerMessage', 'اسم العميل مطلوب.', 'error'); return; }
+  // Assigning a brand-new sale record to a legacy license still needs a name;
+  // editing an existing key's record does not (the name may be added later).
+  if (licenseId && !payload.name) { message('customerMessage', 'اسم العميل مطلوب.', 'error'); return; }
+  if (!licenseId && !payload.name) delete payload.name; // an existing name cannot be cleared
 
   message('customerMessage', 'جارٍ الحفظ...', 'info');
   $('customerSaveBtn').disabled = true;
@@ -702,6 +687,19 @@ async function downloadExport(format, bodyOverride) {
       return;
     }
     body = { format, scope, licenseIds, customerIds, filters: { sort: state.sort, dir: state.dir } };
+  } else if (scope === 'unsold' || scope === 'sold') {
+    body = {
+      format,
+      scope,
+      filters: {
+        archived: $('archivedFilter').value,
+        productId: $('productFilter').value,
+        status: $('statusFilter').value,
+        paymentStatus: scope === 'sold' ? $('paymentStatusFilter').value : '',
+        sort: state.sort,
+        dir: state.dir,
+      },
+    };
   } else if (scope === 'all') {
     body = { format, scope, filters: { archived: $('archivedFilter').value, sort: state.sort, dir: state.dir } };
   } else {
@@ -759,7 +757,7 @@ $('searchInput').addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(reloadFromFirstPage, 300);
 });
-['statusFilter', 'productFilter', 'archivedFilter', 'incompleteFilter'].forEach((id) =>
+['statusFilter', 'productFilter', 'archivedFilter', 'incompleteFilter', 'saleStatusFilter', 'paymentStatusFilter', 'activationFilter'].forEach((id) =>
   $(id).addEventListener('change', reloadFromFirstPage));
 
 $('pageSize').addEventListener('change', () => {
@@ -789,9 +787,6 @@ $('exportXlsxBtn').addEventListener('click', () => downloadExport('xlsx'));
 $('exportCsvBtn').addEventListener('click', () => downloadExport('csv'));
 
 $('createLicenseBtn').addEventListener('click', openCreateModal);
-$('modeNames').addEventListener('click', () => { setCreateMode('names'); resetCreateKey(); });
-$('modeCount').addEventListener('click', () => { setCreateMode('count'); resetCreateKey(); });
-$('namesInput').addEventListener('input', updateNamesCount);
 $('createLicenseForm').addEventListener('input', resetCreateKey);
 $('createLicenseForm').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -803,8 +798,20 @@ $('copyAllKeysBtn').addEventListener('click', async () => {
     toast('تم نسخ المفاتيح.', 'success');
   } catch (_e) { toast('تعذر النسخ.', 'error'); }
 });
-$('exportBatchBtn').addEventListener('click', () =>
-  downloadExport('csv', { scope: 'selected', licenseIds: state.lastBatchLicenseIds, customerIds: [], filters: {} }));
+const exportBatch = (format) =>
+  downloadExport(format, { scope: 'selected', licenseIds: state.lastBatchLicenseIds, customerIds: [], filters: {} });
+$('exportBatchBtn').addEventListener('click', () => exportBatch('csv'));
+$('exportBatchXlsxBtn').addEventListener('click', () => exportBatch('xlsx'));
+
+// Entering a buyer, price, sale date or a payment means the key was sold.
+['cName', 'cPrice', 'cSoldAt', 'cPaymentStatus'].forEach((id) => {
+  const mark = () => {
+    const touched = id === 'cPaymentStatus' ? $(id).value && $(id).value !== 'unpaid' : $(id).value.trim();
+    if (touched && $('cSaleStatus').value === 'unsold') $('cSaleStatus').value = 'sold';
+  };
+  $(id).addEventListener('input', mark);
+  $(id).addEventListener('change', mark);
+});
 
 $('customerForm').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -974,7 +981,6 @@ $('productsTableBody').addEventListener('click', (event) => {
   else toggleProduct(product);
 });
 
-setCreateMode('names');
 
 if (state.token) {
   showDashboard();

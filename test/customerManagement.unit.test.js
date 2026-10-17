@@ -47,13 +47,20 @@ test('formula neutralisation', () => {
   }
 });
 
-test('CSV output: BOM, CRLF, quoted text, exact money, empty cells', () => {
-  const buf = toCsv([{ customer_number: 1, customer_name: 'مدرسة "أ"', license_key: 'K', status: 'ACTIVE',
-    max_devices: 1, active_devices: 0, sale_price: '10.50', currency: 'EGP',
-    license_created_at: new Date('2026-01-02T03:04:05Z'), sold_at: null, notes: null }]);
+test('CSV output: BOM, CRLF, quoted text, exact money, empty cells, labels', () => {
+  const { COLUMNS } = require('../src/services/exportService');
+  const buf = toCsv([{ customer_number: 1, customer_name: 'مدرسة "أ"', license_id: 'L-1', license_key: 'K', status: 'ACTIVE',
+    sale_status: 'sold', payment_status: 'partial', max_devices: 1, active_devices: 0, sale_price: '10.50', currency: 'EGP',
+    license_type: 'perpetual', license_created_at: new Date('2026-01-02T03:04:05Z'), sold_at: null, notes: null }]);
   const text = buf.toString('utf8');
-  assert.ok(text.startsWith('\uFEFF'));
-  assert.ok(text.includes('1,"مدرسة ""أ""","K","","ACTIVE",1,0,10.50,"EGP","2026-01-02 03:04:05","",""\r\n'));
+  assert.ok(text.startsWith('﻿'));
+  assert.ok(text.endsWith('\r\n'));
+  const line = text.split('\r\n')[1];
+  assert.ok(line.startsWith('1,"مدرسة ""أ""",'));
+  assert.ok(line.includes('"L-1","K","دائم"'));
+  assert.ok(line.includes('"فعال","مباع","جزئي",10.50,"EGP"'), line);
+  assert.ok(line.includes('"2026-01-02 03:04:05"'));
+  assert.equal(text.split('\r\n')[0].split('","').length, COLUMNS.length);
 });
 
 test('search filters are parameterised and wildcards are escaped', () => {
@@ -70,13 +77,12 @@ test('bulk request requires an explicit product (no silent default)', () => {
   assert.throws(() => normalizeRequest({ quantity: 1, productId: '' }), /البرنامج/);
 });
 
-test('bulk request normalisation enforces the 1..1000 rules', () => {
-  assert.equal(normalizeRequest({ productId: 'p', quantity: 1000 }).customers.length, 1000);
-  for (const bad of [0, 1001, '', null, 1.5]) assert.throws(() => normalizeRequest({ productId: 'p', quantity: bad }), v.ValidationError);
-  assert.throws(() => normalizeRequest({ productId: 'p', quantity: 3, customers: [{ name: 'a' }] }), /لا يطابق/);
+test('bulk request normalisation enforces the 1..1000 rules and refuses names / sale data', () => {
+  assert.equal(normalizeRequest({ productId: 'p', quantity: 1000 }).quantity, 1000);
+  for (const bad of [0, 1001, '', null, 1.5, undefined]) assert.throws(() => normalizeRequest({ productId: 'p', quantity: bad }), v.ValidationError);
+  assert.throws(() => normalizeRequest({ productId: 'p', quantity: 3, customers: [{ name: 'a' }] }), /أسماء العملاء/);
+  assert.throws(() => normalizeRequest({ productId: 'p', quantity: 3, defaults: { salePrice: 5 } }), /أسماء العملاء/);
   assert.throws(() => normalizeRequest({ productId: 'p', quantity: 1, duration: 'forever' }), /مدة/);
   assert.throws(() => normalizeRequest({ productId: 'p', quantity: 1, maxDevices: 0 }));
-  const r = normalizeRequest({ productId: 'p', customers: ['أ', { name: 'ب', salePrice: 5, currency: 'sar' }], defaults: { currency: 'EGP' } });
-  assert.equal(r.customers[1].currency, 'SAR');
-  assert.equal(r.customers[0].currency, 'EGP');
+  assert.deepEqual(Object.keys(normalizeRequest({ productId: 'p', quantity: 2 })).sort(), ['duration', 'maxDevices', 'plan', 'productId', 'quantity']);
 });

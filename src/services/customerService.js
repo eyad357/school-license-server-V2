@@ -14,6 +14,9 @@ const {
   ValidationError,
   parseName,
   parseEmail,
+  parsePhone,
+  parseSaleStatus,
+  parsePaymentStatus,
   parseSale,
   parseSalePrice,
   parseCurrency,
@@ -27,6 +30,9 @@ const CUSTOMER_COLUMNS = `
   customer_number::int AS customer_number,
   name,
   email,
+  phone,
+  sale_status,
+  payment_status,
   sale_price,
   currency,
   to_char(sold_at, 'YYYY-MM-DD') AS sold_at,
@@ -116,7 +122,10 @@ async function getCustomerDetails(ref, db = pool) {
   return { customer, licenses: licenses.rows };
 }
 
-const PATCHABLE = ['name', 'email', 'salePrice', 'currency', 'soldAt', 'notes'];
+const PATCHABLE = [
+  'name', 'email', 'phone', 'salePrice', 'currency', 'soldAt', 'notes',
+  'saleStatus', 'paymentStatus',
+];
 
 /**
  * Partial update. A field that is `undefined` is left unchanged; `null` or ''
@@ -140,6 +149,9 @@ async function updateCustomer(ref, patch = {}, db = pool) {
     const next = {
       name: current.name,
       email: current.email,
+      phone: current.phone,
+      saleStatus: current.sale_status,
+      paymentStatus: current.payment_status,
       salePrice: current.sale_price,
       currency: current.currency,
       soldAt: current.sold_at,
@@ -158,6 +170,10 @@ async function updateCustomer(ref, patch = {}, db = pool) {
 
     if (patch.email !== undefined) {
       next.email = parseEmail(patch.email);
+    }
+
+    if (patch.phone !== undefined) {
+      next.phone = parsePhone(patch.phone);
     }
 
     if (patch.salePrice !== undefined) {
@@ -180,6 +196,25 @@ async function updateCustomer(ref, patch = {}, db = pool) {
       throw new ValidationError('يجب اختيار العملة عند إدخال سعر البيع.');
     }
 
+    // Sale / payment status are separate from license status and activation.
+    if (patch.saleStatus !== undefined) {
+      next.saleStatus = parseSaleStatus(patch.saleStatus);
+    } else if (
+      next.saleStatus === 'unsold' &&
+      (next.name !== null || next.salePrice !== null || next.soldAt !== null)
+    ) {
+      // Recording a buyer / price / sale date means the key was sold.
+      next.saleStatus = 'sold';
+    }
+
+    if (patch.paymentStatus !== undefined) {
+      next.paymentStatus = parsePaymentStatus(patch.paymentStatus);
+    }
+
+    if (next.saleStatus === 'unsold' && next.paymentStatus && next.paymentStatus !== 'unpaid') {
+      throw new ValidationError('لا يمكن تسجيل دفع لمفتاح غير مباع. غيّر حالة البيع إلى «مباع» أولًا.');
+    }
+
     const result = await client.query(
       `
       UPDATE customers
@@ -189,6 +224,9 @@ async function updateCustomer(ref, patch = {}, db = pool) {
           currency = $5,
           sold_at = $6,
           notes = $7,
+          phone = $8,
+          sale_status = $9,
+          payment_status = $10,
           updated_at = NOW()
       WHERE id = $1
       RETURNING ${CUSTOMER_COLUMNS}
@@ -201,6 +239,9 @@ async function updateCustomer(ref, patch = {}, db = pool) {
         next.currency,
         next.soldAt,
         next.notes,
+        next.phone,
+        next.saleStatus,
+        next.paymentStatus,
       ]
     );
 
@@ -268,11 +309,13 @@ async function assignCustomerToLicense(licenseId, input = {}, db = pool) {
 
       const created = await client.query(
         `
-        INSERT INTO customers (name, email, sale_price, currency, sold_at, notes)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO customers (name, email, phone, sale_price, currency, sold_at, notes,
+                               sale_status, payment_status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'sold', $8)
         RETURNING ${CUSTOMER_COLUMNS}
         `,
-        [name, email, sale.salePrice, sale.currency, sale.soldAt, sale.notes]
+        [name, email, parsePhone(input.phone), sale.salePrice, sale.currency, sale.soldAt,
+          sale.notes, parsePaymentStatus(input.paymentStatus)]
       );
 
       customer = created.rows[0];

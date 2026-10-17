@@ -107,12 +107,14 @@ async function createCustomerAndLicense({
         `
         INSERT INTO customers (
           name,
-          email
+          email,
+          sale_status,
+          payment_status
         )
-        VALUES ($1, $2)
+        VALUES ($1, $2, 'sold', $3)
         RETURNING id, name, email
         `,
-        [name, email]
+        [name, email, fromPayment ? 'paid' : null]
       );
 
       customerId = customerResult.rows[0].id;

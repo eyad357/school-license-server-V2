@@ -15,17 +15,47 @@ const ExcelJS = require('exceljs');
 const COLUMNS = Object.freeze([
   { key: 'customer_number', header: 'رقم العميل', kind: 'int', width: 12 },
   { key: 'customer_name', header: 'اسم العميل', kind: 'text', width: 32 },
-  { key: 'license_key', header: 'مفتاح التفعيل', kind: 'text', width: 34 },
+  { key: 'customer_email', header: 'البريد الإلكتروني', kind: 'text', width: 28 },
+  { key: 'customer_phone', header: 'الهاتف', kind: 'text', width: 18 },
   { key: 'product_name', header: 'البرنامج', kind: 'text', width: 26 },
+  { key: 'product_id', header: 'معرّف البرنامج', kind: 'text', width: 22 },
+  { key: 'license_id', header: 'مرجع الترخيص', kind: 'text', width: 38 },
+  { key: 'license_key', header: 'مفتاح التفعيل', kind: 'text', width: 34 },
+  { key: 'license_type', header: 'نوع الترخيص', kind: 'text', width: 14 },
+  { key: 'plan', header: 'الخطة', kind: 'text', width: 14 },
+  { key: 'expires_at', header: 'تاريخ الانتهاء', kind: 'datetime', width: 22 },
   { key: 'status', header: 'حالة الترخيص', kind: 'text', width: 14 },
+  { key: 'sale_status', header: 'حالة البيع', kind: 'text', width: 12 },
+  { key: 'payment_status', header: 'حالة الدفع', kind: 'text', width: 12 },
+  { key: 'sale_price', header: 'السعر الفعلي', kind: 'money', width: 14 },
+  { key: 'currency', header: 'العملة', kind: 'text', width: 10 },
+  { key: 'sold_at', header: 'تاريخ البيع', kind: 'text', width: 14 },
+  { key: 'activation_state', header: 'حالة التفعيل', kind: 'text', width: 14 },
   { key: 'max_devices', header: 'الحد الأقصى للأجهزة', kind: 'int', width: 20 },
   { key: 'active_devices', header: 'عدد الأجهزة المستخدمة', kind: 'int', width: 22 },
-  { key: 'sale_price', header: 'سعر البيع', kind: 'money', width: 14 },
-  { key: 'currency', header: 'العملة', kind: 'text', width: 10 },
+  { key: 'first_activated_at', header: 'أول تفعيل (UTC)', kind: 'text', width: 22 },
   { key: 'license_created_at', header: 'تاريخ إنشاء الترخيص', kind: 'datetime', width: 22 },
-  { key: 'sold_at', header: 'تاريخ البيع', kind: 'text', width: 14 },
   { key: 'notes', header: 'الملاحظات', kind: 'text', width: 40 },
 ]);
+
+const VALUE_LABELS = Object.freeze({
+  sale_status: { unsold: 'غير مباع', sold: 'مباع' },
+  payment_status: { unpaid: 'غير مدفوع', paid: 'مدفوع', partial: 'جزئي' },
+  status: { ACTIVE: 'فعال', REVOKED: 'ملغى', EXPIRED: 'منتهي' },
+  license_type: { perpetual: 'دائم', subscription: 'مؤقت' },
+});
+
+/** Adds the derived columns and Arabic labels (does not mutate the input). */
+function prepareRow(row) {
+  const out = { ...row };
+  out.activation_state = row.license_id
+    ? (row.active_devices > 0 ? 'مفعّل' : 'غير مفعّل')
+    : '';
+  for (const [key, map] of Object.entries(VALUE_LABELS)) {
+    if (out[key] && map[out[key]]) out[key] = map[out[key]];
+  }
+  return out;
+}
 
 const FORMULA_START = /^[\s]*[=+\-@\t\r]/;
 
@@ -76,7 +106,8 @@ function csvEscape(text) {
 function toCsv(rows) {
   const lines = [COLUMNS.map((c) => csvEscape(c.header)).join(',')];
 
-  for (const row of rows) {
+  for (const raw of rows) {
+    const row = prepareRow(raw);
     lines.push(
       COLUMNS.map((column) => {
         const cell = cellValue(row, column);
@@ -110,7 +141,8 @@ async function toXlsx(rows) {
   header.font = { bold: true };
   header.alignment = { horizontal: 'center', vertical: 'middle' };
 
-  for (const row of rows) {
+  for (const raw of rows) {
+    const row = prepareRow(raw);
     const added = sheet.addRow({});
 
     COLUMNS.forEach((column, index) => {
@@ -134,9 +166,9 @@ async function toXlsx(rows) {
   return Buffer.from(buffer);
 }
 
-function exportFilename(format) {
+function exportFilename(format, prefix = 'licenses') {
   const d = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 13);
-  return `licenses-${d}.${format}`;
+  return `${prefix}-${d}.${format}`;
 }
 
 module.exports = {

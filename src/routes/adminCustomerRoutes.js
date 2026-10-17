@@ -207,7 +207,7 @@ router.post(
 
     if (!result.replayed) {
       await audit.record(null, { ...audit.fromReq(req), action: 'license.bulk_create', targetType: 'batch', targetId: result.batchId || result.batch_id || null,
-        meta: { productId: body.productId, quantity: body.quantity || (Array.isArray(body.customers) ? body.customers.length : undefined) } });
+        meta: { productId: body.productId, quantity: result.quantity } });
     }
 
     res.set('Cache-Control', 'no-store');
@@ -250,8 +250,20 @@ router.post(
         sort: filters.sort,
         dir: filters.dir,
       };
+    } else if (scope === 'unsold' || scope === 'sold') {
+      // Separate exports: unsold keys vs sold licenses. Same optional filters.
+      queryFilters = {
+        archived: filters.archived || 'exclude',
+        productId: filters.productId,
+        status: filters.status,
+        batchId: filters.batchId,
+        paymentStatus: scope === 'sold' ? filters.paymentStatus : undefined,
+        saleStatus: scope,
+        sort: filters.sort,
+        dir: filters.dir,
+      };
     } else {
-      throw new ValidationError('نطاق التصدير غير صالح (all | search | selected).');
+      throw new ValidationError('نطاق التصدير غير صالح (all | search | selected | unsold | sold).');
     }
 
     const rows = await listRecordsForExport(queryFilters);
@@ -263,7 +275,7 @@ router.post(
         format === 'csv'
           ? 'text/csv; charset=utf-8'
           : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="${exportFilename(format)}"`,
+      'Content-Disposition': `attachment; filename="${exportFilename(format, scope === 'unsold' ? 'unsold-keys' : scope === 'sold' ? 'sold-licenses' : 'licenses')}"`,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'X-Export-Rows': String(rows.length),

@@ -62,6 +62,48 @@ function parseNotes(value) {
   return cleanText(value, { field: 'الملاحظات', max: 2000, multiline: true });
 }
 
+function parsePhone(value) {
+  const phone = cleanText(value, { field: 'رقم الهاتف', max: 40 });
+
+  if (phone === null) {
+    return null;
+  }
+
+  if (!/^[0-9+()\-.\s\u0660-\u0669]{5,40}$/.test(phone)) {
+    throw new ValidationError('صيغة رقم الهاتف غير صحيحة.');
+  }
+
+  return phone;
+}
+
+const SALE_STATUSES = ['unsold', 'sold'];
+const PAYMENT_STATUSES = ['unpaid', 'paid', 'partial'];
+
+function parseSaleStatus(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+
+  if (!SALE_STATUSES.includes(v)) {
+    throw new ValidationError('حالة البيع غير صالحة (unsold | sold).');
+  }
+
+  return v;
+}
+
+/** null/'' => null (not recorded). */
+function parsePaymentStatus(value) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return null;
+  }
+
+  const v = String(value).trim().toLowerCase();
+
+  if (!PAYMENT_STATUSES.includes(v)) {
+    throw new ValidationError('حالة الدفع غير صالحة (unpaid | paid | partial).');
+  }
+
+  return v;
+}
+
 function parseEmail(value) {
   const email = cleanText(value, { field: 'البريد الإلكتروني', max: 320 });
 
@@ -200,6 +242,11 @@ module.exports = {
   parseName,
   parseNotes,
   parseEmail,
+  parsePhone,
+  parseSaleStatus,
+  parsePaymentStatus,
+  SALE_STATUSES,
+  PAYMENT_STATUSES,
   parseSalePrice,
   parseCurrency,
   parseSoldAt,

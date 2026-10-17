@@ -25,9 +25,6 @@ const {
 const { ConflictError } = require('../lib/errors');
 const {
   ValidationError,
-  parseName,
-  parseEmail,
-  parseSale,
   parseIntegerInRange,
 } = require('../lib/validation');
 
@@ -67,77 +64,25 @@ function normalizeRequest(input = {}) {
     throw new ValidationError('معرّف المنتج غير صالح.');
   }
 
-  const defaults = input.defaults && typeof input.defaults === 'object' ? input.defaults : {};
-  const defaultSale = parseSale(defaults);
-
-  let customers;
-
-  if (input.customers !== undefined && input.customers !== null) {
-    if (!Array.isArray(input.customers) || input.customers.length === 0) {
-      throw new ValidationError('قائمة العملاء فارغة.');
+  // Keys are created UNSOLD and anonymous. Customer data is recorded later,
+  // per license, after the sale. Legacy "with names" payloads are refused
+  // explicitly instead of being silently ignored.
+  for (const legacy of ['customers', 'defaults']) {
+    if (input[legacy] !== undefined && input[legacy] !== null) {
+      throw new ValidationError(
+        'إنشاء التراخيص لم يعد يقبل أسماء العملاء أو بيانات البيع. ' +
+          'أنشئ المفاتيح بالكمية فقط، ثم سجّل بيانات العميل داخل سجل كل مفتاح بعد البيع.'
+      );
     }
-
-    if (input.customers.length > MAX_BATCH) {
-      throw new ValidationError(`الحد الأقصى ${MAX_BATCH} ترخيص في العملية الواحدة.`);
-    }
-
-    if (input.quantity !== undefined && input.quantity !== null && input.quantity !== '') {
-      const quantity = parseIntegerInRange(input.quantity, {
-        field: 'الكمية',
-        min: 1,
-        max: MAX_BATCH,
-      });
-
-      if (quantity !== input.customers.length) {
-        throw new ValidationError(
-          `عدد الأسماء (${input.customers.length}) لا يطابق الكمية المطلوبة (${quantity}). ` +
-            'لم يتم إنشاء أي ترخيص.'
-        );
-      }
-    }
-
-    customers = input.customers.map((item, index) => {
-      const row = typeof item === 'string' ? { name: item } : item;
-
-      if (!row || typeof row !== 'object') {
-        throw new ValidationError(`السطر ${index + 1}: بيانات العميل غير صالحة.`);
-      }
-
-      try {
-        const sale = parseSale({
-          salePrice: row.salePrice ?? defaultSale.salePrice,
-          currency: row.currency ?? defaultSale.currency,
-          soldAt: row.soldAt ?? defaultSale.soldAt,
-          notes: row.notes ?? defaultSale.notes,
-        });
-
-        return {
-          name: parseName(row.name, { required: true }),
-          email: parseEmail(row.email),
-          ...sale,
-        };
-      } catch (error) {
-        if (error instanceof ValidationError) {
-          throw new ValidationError(`السطر ${index + 1}: ${error.message}`);
-        }
-        throw error;
-      }
-    });
-  } else {
-    const quantity = parseIntegerInRange(input.quantity, {
-      field: 'الكمية',
-      min: 1,
-      max: MAX_BATCH,
-    });
-
-    customers = Array.from({ length: quantity }, () => ({
-      name: null,
-      email: null,
-      ...defaultSale,
-    }));
   }
 
-  return { maxDevices, duration, plan, productId, customers };
+  const quantity = parseIntegerInRange(input.quantity, {
+    field: 'الكمية',
+    min: 1,
+    max: MAX_BATCH,
+  });
+
+  return { maxDevices, duration, plan, productId, quantity };
 }
 
 function hashRequest(normalized) {
@@ -163,10 +108,7 @@ async function fetchBatchItems(client, licenseIds) {
       l.created_at AS license_created_at,
       c.id AS customer_id,
       c.customer_number,
-      c.name AS customer_name,
-      c.sale_price,
-      c.currency,
-      to_char(c.sold_at, 'YYYY-MM-DD') AS sold_at
+      c.sale_status
     FROM unnest($1::uuid[]) WITH ORDINALITY AS u(id, ord)
     JOIN licenses l ON l.id = u.id
     LEFT JOIN customers c ON c.id = l.customer_id
@@ -179,31 +121,18 @@ async function fetchBatchItems(client, licenseIds) {
 }
 
 function toResponse(batchId, items, replayed) {
-  const namesSeen = new Map();
-
-  for (const item of items) {
-    if (item.customer_name) {
-      namesSeen.set(item.customer_name, (namesSeen.get(item.customer_name) || 0) + 1);
-    }
-  }
-
   return {
     batchId,
     replayed,
     quantity: items.length,
-    duplicateNames: [...namesSeen.entries()]
-      .filter(([, count]) => count > 1)
-      .map(([name]) => name),
     items: items.map((row) => ({
       index: row.position,
       customerNumber: row.customer_number === null ? null : Number(row.customer_number),
       customerId: row.customer_id,
-      customerName: row.customer_name,
-      salePrice: row.sale_price,
-      currency: row.currency,
-      soldAt: row.sold_at,
+      saleStatus: row.sale_status,
       licenseId: row.license_id,
       licenseKey: row.license_key,
+      productId: row.product_id,
       status: row.status,
       maxDevices: row.max_devices,
       expiresAt: row.expires_at,
@@ -227,7 +156,7 @@ async function createBulkLicenses(input = {}, options = {}) {
 
   const normalized = normalizeRequest(input);
   const requestHash = hashRequest(normalized);
-  const n = normalized.customers.length;
+  const n = normalized.quantity;
   const expiresAt = calculateExpiresAt(normalized.duration);
   const licenseType = licenseTypeForDuration(normalized.duration);
 
@@ -280,26 +209,16 @@ async function createBulkLicenses(input = {}, options = {}) {
     const firstNumber = block.rows[0].first;
 
     // 4. Customers, with explicit ids so licenses map to them unambiguously.
-    const customerIds = normalized.customers.map(() => crypto.randomUUID());
+    const customerIds = Array.from({ length: n }, () => crypto.randomUUID());
 
+    // Anonymous, UNSOLD sale records: no name, no price, no date.
     await client.query(
       `
-      INSERT INTO customers (id, customer_number, name, email, sale_price, currency, sold_at, notes)
-      SELECT t.id, $1::bigint + t.ord - 1, t.name, t.email, t.sale_price, t.currency, t.sold_at, t.notes
-      FROM unnest(
-        $2::uuid[], $3::text[], $4::text[], $5::numeric[], $6::text[], $7::date[], $8::text[]
-      ) WITH ORDINALITY AS t(id, name, email, sale_price, currency, sold_at, notes, ord)
+      INSERT INTO customers (id, customer_number, sale_status)
+      SELECT t.id, $1::bigint + t.ord - 1, 'unsold'
+      FROM unnest($2::uuid[]) WITH ORDINALITY AS t(id, ord)
       `,
-      [
-        firstNumber,
-        customerIds,
-        normalized.customers.map((c) => c.name),
-        normalized.customers.map((c) => c.email),
-        normalized.customers.map((c) => c.salePrice),
-        normalized.customers.map((c) => c.currency),
-        normalized.customers.map((c) => c.soldAt),
-        normalized.customers.map((c) => c.notes),
-      ]
+      [firstNumber, customerIds]
     );
 
     // 5. Licenses. Keys are generated here and made unique by the DB constraint.

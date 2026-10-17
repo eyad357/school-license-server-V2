@@ -30,6 +30,11 @@ copy .env.example .env        # (PowerShell/cmd)   أو: cp .env.example .env
 psql "postgres://postgres:postgres@127.0.0.1:5433/school_license_dev" -v ON_ERROR_STOP=1 -f src/db/schema.sql -f src/db/002_customers.sql -f src/db/003_payment_orders.sql
 npm run migrate:plan      # تجربة جافة: تعرض الترقيم ثم تتراجع، لا تحفظ شيئًا
 npm run migrate:apply     # التطبيق الفعلي
+# ثم بالترتيب: 005 و006 و007 (حالة البيع/الدفع) — كلٌّ منها plan ثم apply:
+npm run migrate:plan:005 && npm run migrate:apply:005
+npm run migrate:plan:006 && npm run migrate:apply:006
+node scripts/migrate.js --plan  src/db/007_sale_status.sql
+node scripts/migrate.js --apply src/db/007_sale_status.sql
 ```
 > `schema.sql` كان فيه خطأ صياغة (فاصلة زائدة) صُحّح بحرف واحد، فصار قابلًا للتشغيل على قاعدة فارغة.
 

@@ -15,6 +15,7 @@ const pool = require('../db/pool');
 const { ValidationError, isUuid } = require('../lib/validation');
 
 const STATUSES = ['ACTIVE', 'REVOKED', 'EXPIRED'];
+const { SALE_STATUSES, PAYMENT_STATUSES } = require('../lib/validation');
 const MAX_PAGE_SIZE = 200;
 const MAX_EXPORT_ROWS = 50000;
 
@@ -27,6 +28,8 @@ const SORT_COLUMNS = Object.freeze({
   active_devices: 'active_devices',
   sale_price: 'c.sale_price',
   sold_at: 'c.sold_at',
+  sale_status: 'c.sale_status',
+  payment_status: 'c.payment_status',
   created_at: 'COALESCE(l.created_at, c.created_at)',
 });
 
@@ -45,6 +48,9 @@ const SELECT_COLUMNS = `
   c.customer_number::int AS customer_number,
   c.name AS customer_name,
   c.email AS customer_email,
+  c.phone AS customer_phone,
+  c.sale_status,
+  c.payment_status,
   c.sale_price,
   c.currency,
   to_char(c.sold_at, 'YYYY-MM-DD') AS sold_at,
@@ -56,7 +62,17 @@ const SELECT_COLUMNS = `
     FROM activations a
     WHERE a.license_id = l.id
       AND a.deactivated_at IS NULL
-  ) AS active_devices
+  ) AS active_devices,
+  (
+    SELECT COUNT(*)::int
+    FROM activations a
+    WHERE a.license_id = l.id
+  ) AS total_activations,
+  (
+    SELECT to_char(MIN(a.activated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    FROM activations a
+    WHERE a.license_id = l.id
+  ) AS first_activated_at
 `;
 
 const FROM_CLAUSE = `
@@ -68,11 +84,13 @@ const FROM_CLAUSE = `
 `;
 
 // A row needs attention when it has no customer, no name, or no recorded price.
+// Unsold keys are not "incomplete": they simply have no sale yet.
 const INCOMPLETE_SQL = `(
   c.id IS NULL
-  OR c.name IS NULL
-  OR btrim(c.name) = ''
-  OR c.sale_price IS NULL
+  OR (
+    c.sale_status = 'sold'
+    AND (c.name IS NULL OR btrim(c.name) = '' OR c.sale_price IS NULL)
+  )
 )`;
 
 function escapeLike(text) {
@@ -114,6 +132,52 @@ function buildWhere(filters = {}) {
     }
 
     clauses.push(`l.status = ${push(status)}`);
+  }
+
+  // --- sale / payment status (separate from license status) ----------------
+  if (filters.saleStatus) {
+    const v = String(filters.saleStatus).toLowerCase();
+
+    if (!SALE_STATUSES.includes(v)) {
+      throw new ValidationError('حالة البيع غير صالحة.');
+    }
+
+    clauses.push(`c.sale_status = ${push(v)}`);
+  }
+
+  if (filters.paymentStatus) {
+    const v = String(filters.paymentStatus).toLowerCase();
+
+    if (v === 'none') {
+      clauses.push('c.payment_status IS NULL');
+    } else if (PAYMENT_STATUSES.includes(v)) {
+      clauses.push(`c.payment_status = ${push(v)}`);
+    } else {
+      throw new ValidationError('حالة الدفع غير صالحة.');
+    }
+  }
+
+  // --- activation state ------------------------------------------------------
+  if (filters.activation) {
+    const v = String(filters.activation).toLowerCase();
+    const active = `EXISTS (SELECT 1 FROM activations a WHERE a.license_id = l.id AND a.deactivated_at IS NULL)`;
+
+    if (v === 'activated') clauses.push(active);
+    else if (v === 'not_activated') clauses.push(`(l.id IS NOT NULL AND NOT ${active})`);
+    else throw new ValidationError('حالة التفعيل غير صالحة.');
+  }
+
+  // --- one creation batch ----------------------------------------------------
+  if (filters.batchId) {
+    if (!isUuid(filters.batchId)) {
+      throw new ValidationError('معرّف الدفعة غير صالح.');
+    }
+
+    clauses.push(
+      `l.id = ANY(COALESCE((SELECT b.license_ids FROM license_batches b WHERE b.id = ${push(
+        String(filters.batchId).toLowerCase()
+      )}::uuid), '{}'::uuid[]))`
+    );
   }
 
   // --- program (product) ---------------------------------------------------
@@ -294,6 +358,15 @@ async function getSummary(productId, db = pool) {
     FROM customers
   `);
 
+  const sales = await db.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE c.sale_status = 'unsold')::int AS unsold,
+      COUNT(*) FILTER (WHERE c.sale_status = 'sold')::int AS sold
+    ${FROM_CLAUSE}
+    WHERE l.id IS NOT NULL AND (c.id IS NULL OR c.archived_at IS NULL)
+    ${productId ? 'AND l.product_id = $1' : ''}
+  `, pParams);
+
   const incomplete = await db.query(`
     SELECT COUNT(*)::int AS n
     ${FROM_CLAUSE}
@@ -306,6 +379,8 @@ async function getSummary(productId, db = pool) {
     active: licenses.rows[0].active,
     revoked: licenses.rows[0].revoked,
     expired: licenses.rows[0].expired,
+    unsold: sales.rows[0].unsold,
+    sold: sales.rows[0].sold,
     customers: customers.rows[0].customers,
     archivedCustomers: customers.rows[0].archived_customers,
     incompleteRecords: incomplete.rows[0].n,
