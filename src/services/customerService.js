@@ -9,6 +9,8 @@
 // activate / validate / deactivate code paths.
 
 const pool = require('../db/pool');
+const { recordEvent } = require('./eventService');
+const audit = require('./auditService');
 const { NotFoundError, ConflictError } = require('../lib/errors');
 const {
   ValidationError,
@@ -331,8 +333,91 @@ async function assignCustomerToLicense(licenseId, input = {}, db = pool) {
   });
 }
 
+/**
+ * Permanently deletes one record (the license, if any, and its customer row) and
+ * renumbers ALL customers so the numbers stay 1..N with no gaps
+ * (delete #2 => old #3 becomes #2, and so on). Everything is ONE transaction.
+ *
+ * customer_number is normally immutable (trigger), so the trigger is disabled for
+ * this transaction only; if anything fails the whole thing - including the trigger
+ * change - is rolled back.
+ */
+async function deleteRecordAndRenumber({ licenseId, customerId } = {}, auditCtx = {}, db = pool) {
+  if (!licenseId && !customerId) {
+    throw new ValidationError('لا يوجد سجل لحذفه.');
+  }
+  if (licenseId && !isUuid(licenseId)) throw new ValidationError('معرّف الترخيص غير صالح.');
+  if (customerId && !isUuid(customerId)) throw new ValidationError('معرّف العميل غير صالح.');
+
+  return withTransaction(db, async (client) => {
+    // Serialise with other deletes / inserts while numbers are being shifted.
+    await client.query('LOCK TABLE customers IN ACCESS EXCLUSIVE MODE');
+
+    let linkedCustomerId = customerId ? customerId.toLowerCase() : null;
+    let deletedLicense = false;
+
+    if (licenseId) {
+      const lic = await client.query(
+        'DELETE FROM licenses WHERE id = $1 RETURNING id, license_key, product_id, customer_id',
+        [licenseId.toLowerCase()]
+      );
+      if (lic.rowCount === 0) throw new NotFoundError('الترخيص غير موجود.');
+
+      const row = lic.rows[0];
+      deletedLicense = true;
+      linkedCustomerId = row.customer_id || linkedCustomerId;
+
+      await recordEvent(client, { licenseId: row.id, productId: row.product_id, type: 'license.deleted' });
+      await audit.record(client, { ...auditCtx, action: 'license.delete', targetType: 'license', targetId: row.id,
+        meta: { key: audit.maskKey(row.license_key), productId: row.product_id } }, { strict: true });
+    }
+
+    let deletedCustomer = false;
+
+    if (linkedCustomerId) {
+      const others = await client.query(
+        'SELECT COUNT(*)::int AS n FROM licenses WHERE customer_id = $1',
+        [linkedCustomerId]
+      );
+
+      if (others.rows[0].n === 0) {
+        const del = await client.query('DELETE FROM customers WHERE id = $1 RETURNING customer_number::int AS n', [linkedCustomerId]);
+        deletedCustomer = del.rowCount > 0;
+        if (deletedCustomer) {
+          await audit.record(client, { ...auditCtx, action: 'customer.delete', targetType: 'customer', targetId: linkedCustomerId,
+            meta: { customerNumber: del.rows[0].n } }, { strict: true });
+        }
+      }
+    }
+
+    if (!deletedLicense && !deletedCustomer) {
+      throw new ConflictError('لا يمكن حذف هذا العميل لأنه مرتبط بتراخيص أخرى.', 'has_licenses');
+    }
+
+    let renumbered = false;
+    if (deletedCustomer) {
+      await client.query('ALTER TABLE customers DISABLE TRIGGER trg_customers_protect_customer_number');
+      // Step 1 moves every number out of the way (unique index), step 2 assigns 1..N.
+      await client.query('UPDATE customers SET customer_number = customer_number + 1000000000000');
+      await client.query(`
+        UPDATE customers c
+        SET customer_number = r.rn
+        FROM (SELECT id, ROW_NUMBER() OVER (ORDER BY customer_number) AS rn FROM customers) r
+        WHERE c.id = r.id`);
+      await client.query('ALTER TABLE customers ENABLE TRIGGER trg_customers_protect_customer_number');
+      await client.query(
+        'UPDATE customer_number_counter SET last_number = (SELECT COALESCE(MAX(customer_number), 0) FROM customers) WHERE id = 1'
+      );
+      renumbered = true;
+    }
+
+    return { deletedLicense, deletedCustomer, renumbered };
+  });
+}
+
 module.exports = {
   withTransaction,
+  deleteRecordAndRenumber,
   getCustomerDetails,
   updateCustomer,
   archiveCustomer,

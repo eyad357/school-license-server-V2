@@ -15,6 +15,7 @@ const {
   archiveCustomer,
   unarchiveCustomer,
   assignCustomerToLicense,
+  deleteRecordAndRenumber,
 } = require('../services/customerService');
 const {
   listRecords,
@@ -172,6 +173,18 @@ router.post(
     await audit.record(null, { ...audit.fromReq(req), action: 'customer.unarchive', targetType: 'customer', targetId: req.params.ref, meta: {} });
 
     res.json({ status: 'ok', customer });
+  })
+);
+
+// Permanently delete a record (license + its customer) and renumber customers 1..N.
+router.post(
+  '/records/delete',
+  requireAdmin,
+  handle('Delete record', async (req, res) => {
+    const { licenseId, customerId } = req.body || {};
+    const result = await deleteRecordAndRenumber({ licenseId, customerId }, audit.fromReq(req));
+
+    res.json({ status: 'deleted', ...result });
   })
 );
 
