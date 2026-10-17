@@ -214,7 +214,6 @@ function renderRows() {
     const hasLicense = Boolean(row.license_id);
     const hasCustomer = Boolean(row.customer_id);
     const sold = row.sale_status === 'sold';
-    const incomplete = !hasCustomer || (sold && (!row.customer_name || row.sale_price === null));
 
     const numberCell = hasCustomer
       ? `<button class="cust-no" type="button" data-action="customer" data-key="${escapeHtml(key)}">${escapeHtml(row.customer_number)}</button>`
@@ -224,8 +223,8 @@ function renderRows() {
       ? `<button class="link-btn" type="button" data-action="customer" data-key="${escapeHtml(key)}">
            <bdi>${escapeHtml(row.customer_name || (sold ? 'بدون اسم' : 'غير مباع — سجّل البيع'))}</bdi></button>
          ${row.archived_at ? '<span class="badge inactive">مؤرشف</span>' : ''}
-         ${incomplete ? '<span class="badge warn">ناقص</span>' : ''}`
-      : `<span class="muted">بدون عميل</span> <span class="badge warn">ناقص</span>
+         `
+      : `<span class="muted">بدون عميل</span>
          <button class="secondary" type="button" data-action="complete" data-key="${escapeHtml(key)}">استكمال البيانات</button>`;
 
     const keyCell = hasLicense
@@ -236,12 +235,6 @@ function renderRows() {
       : '<span class="muted">—</span>';
 
     let actions = '';
-    if (!hasLicense && hasCustomer) {
-      actions = `
-        <div class="actions">
-          <button class="danger" type="button" data-action="delete" data-key="${escapeHtml(key)}">حذف</button>
-        </div>`;
-    }
     if (hasLicense) {
       const toggle = row.status === 'ACTIVE'
         ? `<button class="danger" type="button" data-action="revoke" data-key="${escapeHtml(key)}">إلغاء</button>`
@@ -550,7 +543,7 @@ async function setArchived(archive) {
 /* ------------------------------------------------- license actions (kept) */
 
 function describe(row) {
-  return `${row.customer_number ? `عميل #${row.customer_number} — ` : ''}${row.customer_name || 'بدون اسم'}\n${row.license_key || ""}`;
+  return `${row.customer_number ? `عميل #${row.customer_number} — ` : ''}${row.customer_name || 'بدون اسم'}\n${row.license_key}`;
 }
 
 async function revokeLicense(row) {
@@ -573,20 +566,16 @@ async function reactivateLicense(row) {
 
 async function deleteLicense(row) {
   const confirmed = confirm(
-    'تحذير!\n\nسيتم حذف هذا السجل نهائيًا (الترخيص وبيانات العميل):\n\n' + describe(row) +
-    '\n\nسيتم حذف ارتباطات الأجهزة أيضًا، وإعادة ترقيم العملاء بعده تلقائيًا.\nلا يمكن التراجع عن هذه العملية.\n\nهل أنت متأكد؟'
+    'تحذير!\n\nسيتم حذف الترخيص نهائيًا:\n\n' + describe(row) +
+    '\n\nسيتم حذف ارتباطات الأجهزة أيضًا.\nلا يمكن التراجع عن هذه العملية.\n\nهل أنت متأكد؟'
   );
   if (!confirmed) return;
 
   try {
-    await api('/records/delete', {
-      method: 'POST',
-      body: JSON.stringify({ licenseId: row.license_id || undefined, customerId: row.customer_id || undefined }),
-    });
-    toast('تم الحذف نهائيًا وإعادة ترقيم العملاء.', 'success');
-    state.selected.clear();
+    await api(`/licenses/${row.license_id}`, { method: 'DELETE' });
+    toast('تم حذف الترخيص نهائيًا (سجل العميل ورقمه يبقيان).', 'success');
     await loadRecords();
-  } catch (error) { toast(`فشل الحذف: ${error.message}`, 'error'); }
+  } catch (error) { toast(`فشل حذف الترخيص: ${error.message}`, 'error'); }
 }
 
 function openEditLicense(row) {

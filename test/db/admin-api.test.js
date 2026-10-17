@@ -305,6 +305,7 @@ test('13c. XLSX export opens correctly; numbers are numbers, text never becomes 
   // customer numbers are numeric
   assert.equal(typeof ws.getRow(2).getCell(1).value, 'number');
 
+  const priceCol = require('../../src/services/exportService').COLUMNS.findIndex((c) => c.key === 'sale_price') + 1;
   let sawPrice = false;
   let sawNeutralised = false;
 
@@ -313,7 +314,7 @@ test('13c. XLSX export opens correctly; numbers are numbers, text never becomes 
     row.eachCell({ includeEmpty: false }, (cell) => {
       assert.notEqual(typeof cell.value, 'object', `cell ${cell.address} is a rich/formula object`);
       assert.ok(!cell.formula, `cell ${cell.address} became a formula`);
-      if (cell.col === 15) { sawPrice = true; assert.equal(typeof cell.value, 'number'); }
+      if (cell.col === priceCol) { sawPrice = true; assert.equal(typeof cell.value, 'number'); }
       if (cell.value === "'=1+1") sawNeutralised = true;
     });
   });

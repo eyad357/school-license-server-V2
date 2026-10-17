@@ -57,10 +57,14 @@ test('CSV output: BOM, CRLF, quoted text, exact money, empty cells, labels', () 
   assert.ok(text.endsWith('\r\n'));
   const line = text.split('\r\n')[1];
   assert.ok(line.startsWith('1,"مدرسة ""أ""",'));
-  assert.ok(line.includes('"L-1","K","دائم"'));
-  assert.ok(line.includes('"فعال","مباع","جزئي",10.50,"EGP"'), line);
-  assert.ok(line.includes('"2026-01-02 03:04:05"'));
+  assert.ok(line.includes('"K","دائم"'));
+  assert.ok(line.includes('"فعال",10.50,"EGP"'), line);
+  for (const removed of ['L-1', 'مباع', 'جزئي']) assert.ok(!line.includes(removed), `removed column leaked: ${removed}`);
+  assert.ok(!line.includes('2026-01-02'), 'license creation date is no longer exported');
   assert.equal(text.split('\r\n')[0].split('","').length, COLUMNS.length);
+  assert.equal(COLUMNS.length, 15);
+  const removedHeaders = ['البريد الإلكتروني', 'مرجع الترخيص', 'معرّف البرنامج', 'الخطة', 'حالة الدفع', 'حالة البيع', 'أول تفعيل (UTC)', 'تاريخ إنشاء الترخيص'];
+  for (const h of removedHeaders) assert.ok(!COLUMNS.some((c) => c.header === h), `column still exported: ${h}`);
 });
 
 test('search filters are parameterised and wildcards are escaped', () => {

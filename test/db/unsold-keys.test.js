@@ -254,8 +254,8 @@ test('T8. CSV and Excel export: unsold keys separate from sold licenses, all req
   const col = (name) => COLUMNS.findIndex((c) => c.key === name);
   const unsoldKeys = new Set(items.slice(2).map((i) => i.licenseKey));
   assert.deepEqual(new Set(u.slice(1).map((r) => r[col('license_key')])), unsoldKeys);
-  assert.ok(u.slice(1).every((r) => r[col('sale_status')] === 'غير مباع' && r[col('customer_name')] === ''));
-  assert.ok(u.slice(1).every((r) => /^\d+$/.test(r[col('customer_number')]) && r[col('license_id')].length === 36));
+  assert.ok(u.slice(1).every((r) => r[col('customer_name')] === '' && r[col('sale_price')] === '' && r[col('sold_at')] === ''));
+  assert.ok(u.slice(1).every((r) => /^\d+$/.test(r[col('customer_number')]) && r[col('license_key')].length > 10));
 
   // --- sold XLSX
   const sold = await admin('POST', '/export', { raw: true, body: { format: 'xlsx', scope: 'sold' } });
@@ -276,12 +276,9 @@ test('T8. CSV and Excel export: unsold keys separate from sold licenses, all req
   assert.equal(r0.getCell(col('sale_price') + 1).value, 300);
   assert.equal(r0.getCell(col('currency') + 1).value, 'EGP');
   assert.equal(r0.getCell(col('sold_at') + 1).value, '2026-09-01');
-  assert.equal(r0.getCell(col('payment_status') + 1).value, 'مدفوع');
-  assert.equal(r0.getCell(col('sale_status') + 1).value, 'مباع');
   assert.equal(r0.getCell(col('activation_state') + 1).value, 'مفعّل');
   assert.equal(r0.getCell(col('active_devices') + 1).value, 1);
   assert.equal(r0.getCell(col('license_key') + 1).value, items[0].licenseKey);
-  assert.equal(r0.getCell(col('product_id') + 1).value, SCHOOL);
   assert.equal(r0.getCell(col('license_type') + 1).value, 'دائم');
   const r1 = byNumber[items[1].customerNumber];
   assert.equal(r1.getCell(col('activation_state') + 1).value, 'غير مفعّل');
