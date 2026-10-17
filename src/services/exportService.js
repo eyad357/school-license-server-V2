@@ -20,7 +20,6 @@ const COLUMNS = Object.freeze([
   { key: 'license_key', header: 'مفتاح التفعيل', kind: 'text', width: 34 },
   { key: 'license_type', header: 'نوع الترخيص', kind: 'text', width: 14 },
   { key: 'expires_at', header: 'تاريخ الانتهاء', kind: 'datetime', width: 22 },
-  { key: 'status', header: 'حالة الترخيص', kind: 'text', width: 14 },
   { key: 'sale_price', header: 'السعر الفعلي', kind: 'money', width: 14 },
   { key: 'currency', header: 'العملة', kind: 'text', width: 10 },
   { key: 'sold_at', header: 'تاريخ البيع', kind: 'text', width: 14 },

@@ -58,12 +58,12 @@ test('CSV output: BOM, CRLF, quoted text, exact money, empty cells, labels', () 
   const line = text.split('\r\n')[1];
   assert.ok(line.startsWith('1,"مدرسة ""أ""",'));
   assert.ok(line.includes('"K","دائم"'));
-  assert.ok(line.includes('"فعال",10.50,"EGP"'), line);
-  for (const removed of ['L-1', 'مباع', 'جزئي']) assert.ok(!line.includes(removed), `removed column leaked: ${removed}`);
+  assert.ok(line.includes('10.50,"EGP"'), line);
+  for (const removed of ['L-1', 'مباع', 'جزئي', 'فعال']) assert.ok(!line.includes(removed), `removed column leaked: ${removed}`);
   assert.ok(!line.includes('2026-01-02'), 'license creation date is no longer exported');
   assert.equal(text.split('\r\n')[0].split('","').length, COLUMNS.length);
-  assert.equal(COLUMNS.length, 15);
-  const removedHeaders = ['البريد الإلكتروني', 'مرجع الترخيص', 'معرّف البرنامج', 'الخطة', 'حالة الدفع', 'حالة البيع', 'أول تفعيل (UTC)', 'تاريخ إنشاء الترخيص'];
+  assert.equal(COLUMNS.length, 14);
+  const removedHeaders = ['البريد الإلكتروني', 'مرجع الترخيص', 'معرّف البرنامج', 'الخطة', 'حالة الدفع', 'حالة البيع', 'أول تفعيل (UTC)', 'تاريخ إنشاء الترخيص', 'حالة الترخيص'];
   for (const h of removedHeaders) assert.ok(!COLUMNS.some((c) => c.header === h), `column still exported: ${h}`);
 });
 
