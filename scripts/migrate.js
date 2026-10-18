@@ -8,7 +8,7 @@
  *   node scripts/migrate.js --apply [file]   executes, verifies, then COMMITs.
  *
  * Default file: src/db/004_customer_management.sql (pass src/db/005_products_platform.sql for the multi-product migration;
- * run 004 first, then 005, 006, 007 - each is its own transaction and each is idempotent)
+ * run 004 first, then 005, 006, 007, 008 - each is its own transaction and each is idempotent)
  * Reads DATABASE_URL from the environment (or .env). It never prints secrets.
  *
  * Guarantees:
